@@ -2,12 +2,14 @@ import { getChronologySettings } from 'src/main';
 
 import { App, TFile, moment } from "obsidian";
 import { CalendarItem, CalendarItemType } from "./CalendarType";
+import { matchesNoteFilter } from "./noteFilterSettings";
+import type { NoteFilterState } from "./noteFilterSettings";
 import type { DateDisplayMode } from "./timeIndexSettings";
 import { isPathExcluded, normalizeExcludedFolders } from "./timeIndexSettings";
 
 export interface ITimeIndex {
     getHeatForDate(date: string): number;
-    getNotesForCalendarItem(item: CalendarItem): NoteAttributes[];
+    getNotesForCalendarItem(item: CalendarItem, dateDisplayMode?: DateDisplayMode, filter?: NoteFilterState): NoteAttributes[];
 }
 
 export enum DateAttribute {
@@ -48,8 +50,14 @@ export class TimeIndex implements ITimeIndex {
         this.indexSettingsKey = undefined;
     }
 
-    getNotesForCalendarItem(item: CalendarItem, sortingStrategy = this.getSortingStrategy(), desc = true): NoteAttributes[] {
+    getNotesForCalendarItem(
+        item: CalendarItem,
+        dateDisplayMode: DateDisplayMode = getChronologySettings().dateDisplayMode,
+        filter?: NoteFilterState,
+        desc = true
+    ): NoteAttributes[] {
         const settings = getChronologySettings();
+        const sortingStrategy = this.getSortingStrategy(dateDisplayMode);
         const excludedFolders = normalizeExcludedFolders(settings.excludedFolders);
         const allNotes = this.app.vault.getFiles().filter(f =>
             (f.extension === 'md' || f.extension === 'canvas') &&
@@ -68,7 +76,7 @@ export class TimeIndex implements ITimeIndex {
                 const day = item.date.format("YYYY-MM-DD");
                 if (this.index.has(day)) {
                     const notes =  this.index.get(day) as NoteAttributes[];
-                    return this.sortNotes(notes, sortingStrategy, desc);
+                    return this.sortNotes(this.applyFilter(notes, filter), desc);
                 } else {
                     return [];
                 }
@@ -173,7 +181,7 @@ export class TimeIndex implements ITimeIndex {
 
             ;
 
-        notes = this.sortNotes(notes, sortingStrategy, desc);
+        notes = this.sortNotes(this.applyFilter(notes, filter), desc);
 
         return notes;
     }
@@ -207,7 +215,7 @@ export class TimeIndex implements ITimeIndex {
 
     // }
 
-    sortNotes(items: NoteAttributes[], sortingStrategy: SortingStrategy, desc = false): NoteAttributes[] {
+    sortNotes(items: NoteAttributes[], desc = false): NoteAttributes[] {
         const res = items.sort((a,b)=>
             (a.time-b.time)  
         )
@@ -217,14 +225,24 @@ export class TimeIndex implements ITimeIndex {
         return res;
     }
 
-    private getSortingStrategy(): SortingStrategy {
+    private getSortingStrategy(dateDisplayMode: DateDisplayMode): SortingStrategy {
         const strategies: Record<DateDisplayMode, SortingStrategy> = {
             both: SortingStrategy.Mixed,
             created: SortingStrategy.Created,
             modified: SortingStrategy.Modified
         };
 
-        return strategies[getChronologySettings().dateDisplayMode];
+        return strategies[dateDisplayMode];
+    }
+
+    private applyFilter(items: NoteAttributes[], filter: NoteFilterState | undefined): NoteAttributes[] {
+        if (!filter) {
+            return items;
+        }
+
+        return items.filter((item) =>
+            matchesNoteFilter(item.note, this.app.metadataCache.getFileCache(item.note), filter)
+        );
     }
 
     private getIndexSettingsKey(sortingStrategy: SortingStrategy, excludedFolders: readonly string[]): string {
@@ -254,7 +272,7 @@ export class TimeIndex implements ITimeIndex {
 
 
 export class MockTimeIndex implements ITimeIndex {
-    getNotesForCalendarItem(item: CalendarItem) {
+    getNotesForCalendarItem(item: CalendarItem, dateDisplayMode?: DateDisplayMode, filter?: NoteFilterState) {
 
         return [];
     }

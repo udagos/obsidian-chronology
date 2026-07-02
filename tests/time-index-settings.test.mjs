@@ -7,14 +7,16 @@ import * as esbuild from "esbuild";
 
 const tempDir = await mkdtemp(path.join(tmpdir(), "chronology-tests-"));
 const outputFile = path.join(tempDir, "timeIndexSettings.mjs");
+const filterOutputFile = path.join(tempDir, "noteFilterSettings.mjs");
 
 try {
 	await esbuild.build({
-		entryPoints: ["src/timeIndexSettings.ts"],
+		entryPoints: ["src/timeIndexSettings.ts", "src/noteFilterSettings.ts"],
 		bundle: true,
 		format: "esm",
 		platform: "node",
-		outfile: outputFile,
+		outdir: tempDir,
+		outExtension: { ".js": ".mjs" },
 		logLevel: "silent",
 	});
 
@@ -43,6 +45,38 @@ try {
 	assert.equal(normalizeDateDisplayMode("both"), "both");
 	assert.equal(normalizeDateDisplayMode("unexpected"), "both");
 	assert.equal(normalizeDateDisplayMode(undefined), "both");
+
+	const {
+		getDisplayedPropertyValues,
+		matchesNoteFilter,
+		normalizeDisplayedProperties,
+		normalizeFilterQuery,
+		normalizeFilterState,
+	} = await import(pathToFileURL(filterOutputFile).href);
+
+	const file = { path: "Projects/Client/a.md" };
+	const metadata = {
+		tags: [{ tag: "#Work" }],
+		frontmatter: {
+			status: "draft",
+			owner: "Ada",
+			tags: ["Project"]
+		}
+	};
+
+	assert.deepEqual(normalizeFilterQuery(" work,\nproject "), ["work", "project"]);
+	assert.deepEqual(normalizeDisplayedProperties("status\nowner"), ["status", "owner"]);
+	assert.deepEqual(normalizeFilterState({ kind: "tag", query: ["work"], invert: true }), {
+		kind: "tag",
+		query: ["work"],
+		invert: true
+	});
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["work"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["work"], invert: true }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "property", query: ["status:dra"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Client"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Clientele"], invert: false }), false);
+	assert.deepEqual(getDisplayedPropertyValues(metadata, ["status", "owner", "missing"]), ["status: draft", "owner: Ada"]);
 } finally {
 	await rm(tempDir, { recursive: true, force: true });
 }

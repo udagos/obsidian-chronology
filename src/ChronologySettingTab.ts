@@ -2,6 +2,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import ChronologyPlugin from "./main";
 import {moment} from "obsidian";
+import { normalizeDisplayedProperties } from "./noteFilterSettings";
 import { normalizeDateDisplayMode, normalizeExcludedFolders } from "./timeIndexSettings";
 
 export class ChronologySettingTab extends PluginSettingTab {
@@ -144,6 +145,18 @@ export class ChronologySettingTab extends PluginSettingTab {
                 dd.setValue(this.plugin.settings.dateDisplayMode);
                 dd.onChange(async (value) => {
                     this.plugin.settings.dateDisplayMode = normalizeDateDisplayMode(value);
+                    await this.plugin.saveSettings();
+                })
+            })
+
+        new Setting(this.containerEl)
+            .setName("Displayed Note Properties")
+            .setDesc("Metadata properties to show on the right side of each note, one per line")
+            .addTextArea(cb => {
+                cb
+                .setValue(this.plugin.settings.displayedProperties.join("\n"))
+                .onChange(async (value) => {
+                    this.plugin.settings.displayedProperties = normalizeDisplayedProperties(value);
                     await this.plugin.saveSettings();
                 })
             })

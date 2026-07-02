@@ -2,6 +2,8 @@
 import { CalendarView, CALENDAR_VIEW } from './Views/CalendarView';
 import { App, Modal, Plugin } from 'obsidian';
 import { ChronologySettingTab } from 'src/ChronologySettingTab';
+import { DEFAULT_NOTE_FILTER_STATE, normalizeDisplayedProperties, normalizeFilterState } from './noteFilterSettings';
+import type { NoteFilterState } from './noteFilterSettings';
 import type { DateDisplayMode } from './timeIndexSettings';
 import { normalizeDateDisplayMode, normalizeExcludedFolders } from './timeIndexSettings';
 
@@ -19,6 +21,8 @@ interface ChronologyPluginSettings {
     computeHeat?: boolean;
     excludedFolders: string[];
     dateDisplayMode: DateDisplayMode;
+    lockedNoteFilter: NoteFilterState;
+    displayedProperties: string[];
 }
 
 const DEFAULT_SETTINGS: ChronologyPluginSettings = {
@@ -33,18 +37,28 @@ const DEFAULT_SETTINGS: ChronologyPluginSettings = {
     modifiedDateAttribute: "",
     computeHeat: true,
     excludedFolders: [],
-    dateDisplayMode: "both"
+    dateDisplayMode: "both",
+    lockedNoteFilter: DEFAULT_NOTE_FILTER_STATE,
+    displayedProperties: []
 }
 
 let expSettings: ChronologyPluginSettings;
+let expPlugin: ChronologyPlugin | undefined;
 
 export function getChronologySettings(){return expSettings;}
+
+export async function saveChronologySettings() {
+    if (expPlugin) {
+        await expPlugin.saveSettings();
+    }
+}
 
 export default class ChronologyPlugin extends Plugin {
     settings: ChronologyPluginSettings;
     ribbonIconEl: HTMLElement | null;
 
     async onload() {
+        expPlugin = this;
         await this.loadSettings();
 
         this.registerView(
@@ -91,6 +105,7 @@ export default class ChronologyPlugin extends Plugin {
     }
 
     onunload() {
+        expPlugin = undefined;
         // this.app.workspace.detachLeavesOfType(CALENDAR_VIEW);
     }
 
@@ -98,6 +113,8 @@ export default class ChronologyPlugin extends Plugin {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
         this.settings.excludedFolders = normalizeExcludedFolders(this.settings.excludedFolders);
         this.settings.dateDisplayMode = normalizeDateDisplayMode(this.settings.dateDisplayMode);
+        this.settings.lockedNoteFilter = normalizeFilterState(this.settings.lockedNoteFilter);
+        this.settings.displayedProperties = normalizeDisplayedProperties(this.settings.displayedProperties);
         expSettings = this.settings;
     }
 
