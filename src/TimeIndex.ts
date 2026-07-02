@@ -2,6 +2,8 @@ import { getChronologySettings } from 'src/main';
 
 import { App, TFile, moment } from "obsidian";
 import { CalendarItem, CalendarItemType } from "./CalendarType";
+import type { DateDisplayMode } from "./timeIndexSettings";
+import { isPathExcluded, normalizeExcludedFolders } from "./timeIndexSettings";
 
 export interface ITimeIndex {
     getHeatForDate(date: string): number;
@@ -35,6 +37,7 @@ export class TimeIndex implements ITimeIndex {
     app: App;
 
     index?: Map<string, NoteAttributes[]>;
+    indexSettingsKey?: string;
 
     constructor(app: App) {
         this.app = app;
@@ -42,15 +45,23 @@ export class TimeIndex implements ITimeIndex {
 
     resetCache(){
         this.index = undefined;
+        this.indexSettingsKey = undefined;
     }
 
-    getNotesForCalendarItem(item: CalendarItem, sortingStrategy = SortingStrategy.Mixed, desc = true): NoteAttributes[] {
-        const allNotes = this.app.vault.getFiles().filter(f => f.extension === 'md' || f.extension === 'canvas');
+    getNotesForCalendarItem(item: CalendarItem, sortingStrategy = this.getSortingStrategy(), desc = true): NoteAttributes[] {
+        const settings = getChronologySettings();
+        const excludedFolders = normalizeExcludedFolders(settings.excludedFolders);
+        const allNotes = this.app.vault.getFiles().filter(f =>
+            (f.extension === 'md' || f.extension === 'canvas') &&
+            !isPathExcluded(f.path, excludedFolders)
+        );
         const { fromTime, toTime } = item.getTimeRange();
         let rebuildCache = false;
-        if (!this.index) {
+        const indexSettingsKey = this.getIndexSettingsKey(sortingStrategy, excludedFolders);
+        if (!this.index || this.indexSettingsKey !== indexSettingsKey) {
             rebuildCache = true;
             this.index = new Map<string, NoteAttributes[]>();
+            this.indexSettingsKey = indexSettingsKey;
         } else {
             
             if (item.type === CalendarItemType.Day) {
@@ -69,8 +80,8 @@ export class TimeIndex implements ITimeIndex {
         let notes = allNotes.reduce<NoteAttributes[]>((acc, note) => {
             let createdTime = moment(note.stat.ctime);
             let modifiedTime = moment(note.stat.mtime);
-            const creationStr = getChronologySettings().creationDateAttribute;
-            const modifiedStr = getChronologySettings().modifiedDateAttribute;
+            const creationStr = settings.creationDateAttribute;
+            const modifiedStr = settings.modifiedDateAttribute;
             if(creationStr || modifiedStr ){
                 const md = app.metadataCache.getFileCache(note);
                 if(md?.frontmatter){
@@ -204,6 +215,26 @@ export class TimeIndex implements ITimeIndex {
             res.reverse();
         }
         return res;
+    }
+
+    private getSortingStrategy(): SortingStrategy {
+        const strategies: Record<DateDisplayMode, SortingStrategy> = {
+            both: SortingStrategy.Mixed,
+            created: SortingStrategy.Created,
+            modified: SortingStrategy.Modified
+        };
+
+        return strategies[getChronologySettings().dateDisplayMode];
+    }
+
+    private getIndexSettingsKey(sortingStrategy: SortingStrategy, excludedFolders: readonly string[]): string {
+        const settings = getChronologySettings();
+        return [
+            sortingStrategy,
+            settings.creationDateAttribute || "",
+            settings.modifiedDateAttribute || "",
+            excludedFolders.join("\n")
+        ].join("|");
     }
 
 

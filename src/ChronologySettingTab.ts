@@ -2,6 +2,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import ChronologyPlugin from "./main";
 import {moment} from "obsidian";
+import { normalizeDateDisplayMode, normalizeExcludedFolders } from "./timeIndexSettings";
 
 export class ChronologySettingTab extends PluginSettingTab {
 	plugin: ChronologyPlugin;
@@ -118,6 +119,32 @@ export class ChronologySettingTab extends PluginSettingTab {
                     this.plugin.settings.modifiedDateAttribute = value;
                     await this.plugin.saveSettings();
                     // this.display();
+                })
+            })
+
+        new Setting(this.containerEl)
+            .setName("Excluded Folders")
+            .setDesc("Vault-relative folder paths to hide, one per line")
+            .addTextArea(cb => {
+                cb
+                .setValue(this.plugin.settings.excludedFolders.join("\n"))
+                .onChange(async (value) => {
+                    this.plugin.settings.excludedFolders = normalizeExcludedFolders(value.split(/\r?\n/));
+                    await this.plugin.saveSettings();
+                })
+            })
+
+        new Setting(this.containerEl)
+            .setName("Date Display Mode")
+            .setDesc("Choose which note dates appear in Chronology")
+            .addDropdown(dd => {
+                dd.addOption("both", "Both created and modified");
+                dd.addOption("created", "Created only");
+                dd.addOption("modified", "Modified only");
+                dd.setValue(this.plugin.settings.dateDisplayMode);
+                dd.onChange(async (value) => {
+                    this.plugin.settings.dateDisplayMode = normalizeDateDisplayMode(value);
+                    await this.plugin.saveSettings();
                 })
             })
 

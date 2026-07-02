@@ -2,6 +2,8 @@
 import { CalendarView, CALENDAR_VIEW } from './Views/CalendarView';
 import { App, Modal, Plugin } from 'obsidian';
 import { ChronologySettingTab } from 'src/ChronologySettingTab';
+import type { DateDisplayMode } from './timeIndexSettings';
+import { normalizeDateDisplayMode, normalizeExcludedFolders } from './timeIndexSettings';
 
 
 interface ChronologyPluginSettings {
@@ -15,6 +17,8 @@ interface ChronologyPluginSettings {
     creationDateAttribute?: string;
     modifiedDateAttribute?: string;
     computeHeat?: boolean;
+    excludedFolders: string[];
+    dateDisplayMode: DateDisplayMode;
 }
 
 const DEFAULT_SETTINGS: ChronologyPluginSettings = {
@@ -27,7 +31,9 @@ const DEFAULT_SETTINGS: ChronologyPluginSettings = {
     firstDayOfWeek: -1, // locale default
     creationDateAttribute: "",
     modifiedDateAttribute: "",
-    computeHeat: true
+    computeHeat: true,
+    excludedFolders: [],
+    dateDisplayMode: "both"
 }
 
 let expSettings: ChronologyPluginSettings;
@@ -90,6 +96,8 @@ export default class ChronologyPlugin extends Plugin {
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        this.settings.excludedFolders = normalizeExcludedFolders(this.settings.excludedFolders);
+        this.settings.dateDisplayMode = normalizeDateDisplayMode(this.settings.dateDisplayMode);
         expSettings = this.settings;
     }
 
