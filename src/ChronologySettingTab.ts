@@ -151,7 +151,7 @@ export class ChronologySettingTab extends PluginSettingTab {
 
         new Setting(this.containerEl)
             .setName("Displayed Note Properties")
-            .setDesc("Metadata properties to show on the right side of each note, one per line")
+            .setDesc("Metadata properties or #tags to show on the right side of each note, separated by commas or new lines")
             .addTextArea(cb => {
                 cb
                 .setValue(this.plugin.settings.displayedProperties.join("\n"))

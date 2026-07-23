@@ -47,12 +47,6 @@ let expPlugin: ChronologyPlugin | undefined;
 
 export function getChronologySettings(){return expSettings;}
 
-export async function saveChronologySettings() {
-    if (expPlugin) {
-        await expPlugin.saveSettings();
-    }
-}
-
 export default class ChronologyPlugin extends Plugin {
     settings: ChronologyPluginSettings;
     ribbonIconEl: HTMLElement | null;

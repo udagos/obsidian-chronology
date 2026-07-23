@@ -65,7 +65,7 @@ try {
 	};
 
 	assert.deepEqual(normalizeFilterQuery(" work,\nproject "), ["work", "project"]);
-	assert.deepEqual(normalizeDisplayedProperties("status\nowner"), ["status", "owner"]);
+	assert.deepEqual(normalizeDisplayedProperties("status\nowner,#rew"), ["status", "owner", "#rew"]);
 	assert.deepEqual(normalizeFilterState({ kind: "tag", query: ["work"], invert: true }), {
 		kind: "tag",
 		query: ["work"],
@@ -77,6 +77,7 @@ try {
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Client"], invert: false }), true);
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Clientele"], invert: false }), false);
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["status", "owner", "missing"]), ["status: draft", "owner: Ada"]);
+	assert.deepEqual(getDisplayedPropertyValues(metadata, ["up", "next", "#work"]), ["#work"]);
 } finally {
 	await rm(tempDir, { recursive: true, force: true });
 }

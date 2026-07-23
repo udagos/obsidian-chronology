@@ -63,12 +63,12 @@ export function matchesNoteFilter(file: FileLike, metadata: MetadataLike | null 
 }
 
 export function getDisplayedPropertyValues(metadata: CachedMetadata | null | undefined, propertyNames: readonly string[]): string[] {
-    if (!metadata?.frontmatter) {
-        return [];
-    }
-
     return propertyNames.flatMap((name) => {
-        const value = metadata.frontmatter?.[name];
+        if (name.startsWith("#")) {
+            return getDisplayedTagValue(metadata, name);
+        }
+
+        const value = metadata?.frontmatter?.[name];
         return formatPropertyValue(name, value);
     });
 }
@@ -145,6 +145,18 @@ function formatPropertyValue(name: string, value: unknown): string[] {
     }
 
     return [`${name}: ${propertyValueToText(value)}`];
+}
+
+function getDisplayedTagValue(metadata: CachedMetadata | null | undefined, tag: string): string[] {
+    const expectedTag = normalizeTag(tag);
+    const tags = new Set<string>();
+    metadata?.tags?.forEach((item) => tags.add(normalizeTag(item.tag)));
+    readFrontmatterTags(metadata?.frontmatter?.tags).forEach((item) => tags.add(normalizeTag(item)));
+    if (!tags.has(expectedTag)) {
+        return [];
+    }
+
+    return [`#${expectedTag}`];
 }
 
 function propertyValueToText(value: unknown): string {
