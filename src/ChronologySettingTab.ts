@@ -161,6 +161,19 @@ export class ChronologySettingTab extends PluginSettingTab {
                 })
             })
 
+        new Setting(this.containerEl)
+            .setName("Sort Notes By Property")
+            .setDesc("A single property name (or #tag) to sort notes by its value. Leave empty to sort by all displayed properties.")
+            .addText(cb => {
+                cb
+                .setPlaceholder("e.g. star or #priority")
+                .setValue(this.plugin.settings.sortByProperty || "")
+                .onChange(async (value) => {
+                    this.plugin.settings.sortByProperty = value.trim();
+                    await this.plugin.saveSettings();
+                })
+            })
+
         // add seting for computeHeat
         this.createToggle(containerEl, "Compute Heat",
             "Compute heat for each day in the calendar",

@@ -217,10 +217,13 @@ export class TimeIndex implements ITimeIndex {
 
     sortNotes(items: NoteAttributes[], desc = false): NoteAttributes[] {
         const settings = getChronologySettings();
+        const sortProps = settings.sortByProperty
+            ? [settings.sortByProperty]
+            : settings.displayedProperties;
         const res = items.sort((a,b)=> {
             const propertyOrder = compareDisplayedPropertyItemLists(
-                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(a.note), settings.displayedProperties),
-                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(b.note), settings.displayedProperties)
+                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(a.note), sortProps),
+                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(b.note), sortProps)
             );
             if (propertyOrder !== 0) {
                 return propertyOrder;

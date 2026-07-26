@@ -23,6 +23,7 @@ interface ChronologyPluginSettings {
     dateDisplayMode: DateDisplayMode;
     lockedNoteFilter: NoteFilterState;
     displayedProperties: string[];
+    sortByProperty: string;
 }
 
 const DEFAULT_SETTINGS: ChronologyPluginSettings = {
@@ -39,7 +40,8 @@ const DEFAULT_SETTINGS: ChronologyPluginSettings = {
     excludedFolders: [],
     dateDisplayMode: "both",
     lockedNoteFilter: DEFAULT_NOTE_FILTER_STATE,
-    displayedProperties: []
+    displayedProperties: [],
+    sortByProperty: "",
 }
 
 let expSettings: ChronologyPluginSettings;

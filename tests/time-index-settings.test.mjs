@@ -84,7 +84,7 @@ try {
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["obsidian-note-status"]), ["📌"]);
 
 	assert.deepEqual(getDisplayedPropertyItems(metadata, ["status", "owner", "#work"]), [
-		{ kind: "property", name: "owner", label: "Ada", title: "owner", sortKey: "ada" },
+		{ kind: "property", name: "owner", label: "Ada", title: "owner", sortKey: "Ada" },
 		{ kind: "property", name: "status", label: "draft", title: "status", sortKey: "draft" },
 		{ kind: "tag", name: "#work", label: "#work", title: "#work", sortKey: "work" },
 	]);

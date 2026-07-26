@@ -267,7 +267,7 @@ function normalizeTag(tag: string): string {
 }
 
 function normalizeSortText(value: string): string {
-    return value.trim().toLowerCase();
+    return value.trim();
 }
 
 export function normalizeFilterKind(kind: unknown): NoteFilterKind {
