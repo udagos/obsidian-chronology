@@ -9,7 +9,7 @@ import { isPathExcluded, normalizeExcludedFolders } from "./timeIndexSettings";
 
 export interface ITimeIndex {
     getHeatForDate(date: string): number;
-    getNotesForCalendarItem(item: CalendarItem, dateDisplayMode?: DateDisplayMode, filter?: NoteFilterState): NoteAttributes[];
+    getNotesForCalendarItem(item: CalendarItem, dateDisplayMode?: DateDisplayMode, filter?: NoteFilterState, desc?: boolean, sortByTime?: boolean): NoteAttributes[];
 }
 
 export enum DateAttribute {
@@ -54,7 +54,8 @@ export class TimeIndex implements ITimeIndex {
         item: CalendarItem,
         dateDisplayMode: DateDisplayMode = getChronologySettings().dateDisplayMode,
         filter?: NoteFilterState,
-        desc = true
+        desc = true,
+        sortByTime = false
     ): NoteAttributes[] {
         const settings = getChronologySettings();
         const sortingStrategy = this.getSortingStrategy(dateDisplayMode);
@@ -76,7 +77,7 @@ export class TimeIndex implements ITimeIndex {
                 const day = item.date.format("YYYY-MM-DD");
                 if (this.index.has(day)) {
                     const notes =  this.index.get(day) as NoteAttributes[];
-                    return this.sortNotes(this.applyFilter(notes, filter), desc);
+                    return this.sortNotes(this.applyFilter(notes, filter), desc, sortByTime);
                 } else {
                     return [];
                 }
@@ -181,7 +182,7 @@ export class TimeIndex implements ITimeIndex {
 
             ;
 
-        notes = this.sortNotes(this.applyFilter(notes, filter), desc);
+        notes = this.sortNotes(this.applyFilter(notes, filter), desc, sortByTime);
 
         return notes;
     }
@@ -215,20 +216,21 @@ export class TimeIndex implements ITimeIndex {
 
     // }
 
-    sortNotes(items: NoteAttributes[], desc = false): NoteAttributes[] {
+    sortNotes(items: NoteAttributes[], desc = false, sortByTime = false): NoteAttributes[] {
         const settings = getChronologySettings();
         const sortProps = settings.sortByProperty
             ? [settings.sortByProperty]
             : settings.displayedProperties;
         const res = items.sort((a,b)=> {
-            const propertyOrder = compareDisplayedPropertyItemLists(
-                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(a.note), sortProps),
-                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(b.note), sortProps)
-            );
-            if (propertyOrder !== 0) {
-                return propertyOrder;
+            if (!sortByTime && sortProps.length > 0) {
+                const propertyOrder = compareDisplayedPropertyItemLists(
+                    getDisplayedPropertyItems(this.app.metadataCache.getFileCache(a.note), sortProps),
+                    getDisplayedPropertyItems(this.app.metadataCache.getFileCache(b.note), sortProps)
+                );
+                if (propertyOrder !== 0) {
+                    return propertyOrder;
+                }
             }
-
             return desc ? b.time-a.time : a.time-b.time;
         })
         return res;

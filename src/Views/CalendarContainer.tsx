@@ -28,6 +28,8 @@ export const CalendarContainer = ({date, onOpen}:CalendarContainerProps) => {
     const [filterKind, setFilterKind] = React.useState<NoteFilterKind>(settings.lockedNoteFilter.kind);
     const [filterQuery, setFilterQuery] = React.useState(settings.lockedNoteFilter.query.join(", "));
     const [filterInvert, setFilterInvert] = React.useState(settings.lockedNoteFilter.invert);
+    const [sortByTime, setSortByTime] = React.useState(false);
+    const [sortDesc, setSortDesc] = React.useState(true);
 
     const noteFilter = React.useMemo(() => ({
         kind: filterKind,
@@ -35,7 +37,7 @@ export const CalendarContainer = ({date, onOpen}:CalendarContainerProps) => {
         invert: filterInvert
     }), [filterKind, filterQuery, filterInvert]);
     
-    const notes = timeIndex.getNotesForCalendarItem(current, dateMode, noteFilter);
+    const notes = timeIndex.getNotesForCalendarItem(current, dateMode, noteFilter, sortDesc, sortByTime);
 
 	const handleChange = useCallback(
 		(value:CalendarItem, isDelta: boolean) => {
@@ -88,6 +90,21 @@ export const CalendarContainer = ({date, onOpen}:CalendarContainerProps) => {
                         <option value="property">属性</option>
                         <option value="folder">文件夹</option>
                     </select>
+                    <button
+                        className={`chronology-sort-btn${sortByTime ? "" : " chronology-sort-btn-active"}`}
+                        onClick={() => setSortByTime(false)}
+                        title="按属性排序"
+                    >属性</button>
+                    <button
+                        className={`chronology-sort-btn${sortByTime ? " chronology-sort-btn-active" : ""}`}
+                        onClick={() => setSortByTime(true)}
+                        title="按时间排序"
+                    >时间</button>
+                    <button
+                        className="chronology-sort-btn chronology-sort-dir-btn"
+                        onClick={() => setSortDesc(d => !d)}
+                        title={sortDesc ? "当前：逆序（新→旧）" : "当前：正序（旧→新）"}
+                    >{sortDesc ? "↓" : "↑"}</button>
                 </div>
                 <div className="chronology-filter-row chronology-filter-row-query">
                     <input
