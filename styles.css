@@ -260,7 +260,8 @@ If your plugin does not need CSS, delete this file.
 
 .chrono-note-chip {
     display: inline-block;
-    max-width: 92px;
+    max-width: 72px;
+    min-width: 14px;
     overflow: hidden;
     text-overflow: ellipsis;
     border: 1px solid var(--background-modifier-border);
@@ -270,6 +271,13 @@ If your plugin does not need CSS, delete this file.
     padding: 0 4px;
     font-size: 10px;
     line-height: 16px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.chrono-note-chip-property,
+.chrono-note-chip-tag {
+    color: var(--text-muted);
 }
 
 .chrono-note-chip-created {

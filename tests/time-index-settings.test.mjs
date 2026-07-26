@@ -47,6 +47,8 @@ try {
 	assert.equal(normalizeDateDisplayMode(undefined), "both");
 
 	const {
+		compareDisplayedPropertyItemLists,
+		getDisplayedPropertyItems,
 		getDisplayedPropertyValues,
 		matchesNoteFilter,
 		normalizeDisplayedProperties,
@@ -60,6 +62,7 @@ try {
 		frontmatter: {
 			status: "draft",
 			owner: "Ada",
+			"obsidian-note-status": "📌",
 			tags: ["Project"]
 		}
 	};
@@ -76,8 +79,17 @@ try {
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "property", query: ["status:dra"], invert: false }), true);
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Client"], invert: false }), true);
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Clientele"], invert: false }), false);
-	assert.deepEqual(getDisplayedPropertyValues(metadata, ["status", "owner", "missing"]), ["status: draft", "owner: Ada"]);
+	assert.deepEqual(getDisplayedPropertyValues(metadata, ["status", "owner", "missing"]), ["Ada", "draft"]);
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["up", "next", "#work"]), ["#work"]);
+	assert.deepEqual(getDisplayedPropertyValues(metadata, ["obsidian-note-status"]), ["📌"]);
+
+	assert.deepEqual(getDisplayedPropertyItems(metadata, ["status", "owner", "#work"]), [
+		{ kind: "property", name: "owner", label: "Ada", title: "owner", sortKey: "ada" },
+		{ kind: "property", name: "status", label: "draft", title: "status", sortKey: "draft" },
+		{ kind: "tag", name: "#work", label: "#work", title: "#work", sortKey: "work" },
+	]);
+	assert.equal(compareDisplayedPropertyItemLists(getDisplayedPropertyItems(metadata, ["status"]), []), -1);
+	assert.equal(compareDisplayedPropertyItemLists([], getDisplayedPropertyItems(metadata, ["status"])), 1);
 } finally {
 	await rm(tempDir, { recursive: true, force: true });
 }

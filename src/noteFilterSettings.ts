@@ -24,6 +24,16 @@ export interface FileLike {
     readonly path: string;
 }
 
+export type DisplayedPropertyKind = "property" | "tag";
+
+export interface DisplayedPropertyItem {
+    readonly kind: DisplayedPropertyKind;
+    readonly name: string;
+    readonly label: string;
+    readonly title: string;
+    readonly sortKey: string;
+}
+
 export function normalizeFilterState(value: Partial<NoteFilterState> | undefined): NoteFilterState {
     if (!value) {
         return DEFAULT_NOTE_FILTER_STATE;
@@ -63,14 +73,57 @@ export function matchesNoteFilter(file: FileLike, metadata: MetadataLike | null 
 }
 
 export function getDisplayedPropertyValues(metadata: CachedMetadata | null | undefined, propertyNames: readonly string[]): string[] {
-    return propertyNames.flatMap((name) => {
-        if (name.startsWith("#")) {
-            return getDisplayedTagValue(metadata, name);
-        }
+    return getDisplayedPropertyItems(metadata, propertyNames).map((item) => item.label);
+}
 
-        const value = metadata?.frontmatter?.[name];
-        return formatPropertyValue(name, value);
-    });
+export function getDisplayedPropertyItems(metadata: CachedMetadata | null | undefined, propertyNames: readonly string[]): DisplayedPropertyItem[] {
+    return propertyNames
+        .flatMap((name) => getDisplayedPropertyItemsForName(metadata, name))
+        .sort(compareDisplayedPropertyItems);
+}
+
+export function compareDisplayedPropertyItems(left: DisplayedPropertyItem, right: DisplayedPropertyItem): number {
+    const leftKind = left.kind === "property" ? 0 : 1;
+    const rightKind = right.kind === "property" ? 0 : 1;
+    if (leftKind !== rightKind) {
+        return leftKind - rightKind;
+    }
+
+    const bySortKey = left.sortKey.localeCompare(right.sortKey, undefined, { sensitivity: "base" });
+    if (bySortKey !== 0) {
+        return bySortKey;
+    }
+
+    const byTitle = left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+    if (byTitle !== 0) {
+        return byTitle;
+    }
+
+    return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+}
+
+export function compareDisplayedPropertyItemLists(left: readonly DisplayedPropertyItem[], right: readonly DisplayedPropertyItem[]): number {
+    if (left.length === 0 && right.length === 0) {
+        return 0;
+    }
+
+    if (left.length === 0) {
+        return 1;
+    }
+
+    if (right.length === 0) {
+        return -1;
+    }
+
+    const limit = Math.min(left.length, right.length);
+    for (let index = 0; index < limit; index += 1) {
+        const byItem = compareDisplayedPropertyItems(left[index], right[index]);
+        if (byItem !== 0) {
+            return byItem;
+        }
+    }
+
+    return left.length - right.length;
 }
 
 export function normalizeDisplayedProperties(values: readonly string[] | string | undefined): string[] {
@@ -139,15 +192,35 @@ function splitPropertyQuery(query: string): readonly [string, string] {
     return [query.slice(0, separatorIndex).trim(), query.slice(separatorIndex + 1).trim()];
 }
 
-function formatPropertyValue(name: string, value: unknown): string[] {
-    if (value === undefined || value === null || value === "") {
+function getDisplayedPropertyItemsForName(metadata: CachedMetadata | null | undefined, name: string): DisplayedPropertyItem[] {
+    if (name.startsWith("#")) {
+        return getDisplayedTagValue(metadata, name);
+    }
+
+    const value = metadata?.frontmatter?.[name];
+    const text = formatPropertyValue(value);
+    if (text === undefined) {
         return [];
     }
 
-    return [`${name}: ${propertyValueToText(value)}`];
+    return [{
+        kind: "property",
+        name,
+        label: text,
+        title: name,
+        sortKey: normalizeSortText(text)
+    }];
 }
 
-function getDisplayedTagValue(metadata: CachedMetadata | null | undefined, tag: string): string[] {
+function formatPropertyValue(value: unknown): string | undefined {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+
+    return propertyValueToText(value);
+}
+
+function getDisplayedTagValue(metadata: CachedMetadata | null | undefined, tag: string): DisplayedPropertyItem[] {
     const expectedTag = normalizeTag(tag);
     const tags = new Set<string>();
     metadata?.tags?.forEach((item) => tags.add(normalizeTag(item.tag)));
@@ -156,7 +229,13 @@ function getDisplayedTagValue(metadata: CachedMetadata | null | undefined, tag: 
         return [];
     }
 
-    return [`#${expectedTag}`];
+    return [{
+        kind: "tag",
+        name: tag,
+        label: `#${expectedTag}`,
+        title: tag,
+        sortKey: normalizeSortText(expectedTag)
+    }];
 }
 
 function propertyValueToText(value: unknown): string {
@@ -185,6 +264,10 @@ function readFrontmatterTags(value: unknown): string[] {
 
 function normalizeTag(tag: string): string {
     return tag.trim().replace(/^#/, "").toLowerCase();
+}
+
+function normalizeSortText(value: string): string {
+    return value.trim().toLowerCase();
 }
 
 export function normalizeFilterKind(kind: unknown): NoteFilterKind {

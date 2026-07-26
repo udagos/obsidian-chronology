@@ -1,7 +1,7 @@
 import { TFile, moment, Keymap, PaneType } from "obsidian";
 import * as React from "react";
 import { useCallback } from "react";
-import { getDisplayedPropertyValues } from "src/noteFilterSettings";
+import { getDisplayedPropertyItems } from "src/noteFilterSettings";
 import { getChronologySettings } from "../main";
 import { DateAttribute, NoteAttributes } from "../TimeIndex";
 
@@ -25,7 +25,7 @@ export const NoteView = ({ item, onOpen, extraInfo = true }:
     const settings = getChronologySettings();
     const dateLabel = item.attribute === DateAttribute.Created ? "新建" : "修改";
     const metadata = app.metadataCache.getFileCache(item.note);
-    const propertyValues = getDisplayedPropertyValues(metadata, settings.displayedProperties);
+    const propertyItems = getDisplayedPropertyItems(metadata, settings.displayedProperties);
 
     const desc = `${item.attribute === DateAttribute.Created ? "Created" : "Modified"} ${time.format("LLL")}`;
 
@@ -65,7 +65,16 @@ return (
         </span>
         <span className="chrono-note-meta">
             <span className={`chrono-note-chip chrono-note-chip-${item.attribute === DateAttribute.Created ? "created" : "modified"}`}>{dateLabel}</span>
-            {propertyValues.map(value => <span className="chrono-note-chip" key={`${item.note.path}-${value}`}>{value}</span>)}
+            {propertyItems.map(property => (
+                <span
+                    className={`chrono-note-chip chrono-note-chip-${property.kind}`}
+                    key={`${item.note.path}-${property.kind}-${property.name}-${property.label}`}
+                    title={property.title}
+                    aria-label={`${property.title}: ${property.label}`}
+                >
+                    {property.label}
+                </span>
+            ))}
         </span>
 
 

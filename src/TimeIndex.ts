@@ -2,7 +2,7 @@ import { getChronologySettings } from 'src/main';
 
 import { App, TFile, moment } from "obsidian";
 import { CalendarItem, CalendarItemType } from "./CalendarType";
-import { matchesNoteFilter } from "./noteFilterSettings";
+import { compareDisplayedPropertyItemLists, getDisplayedPropertyItems, matchesNoteFilter } from "./noteFilterSettings";
 import type { NoteFilterState } from "./noteFilterSettings";
 import type { DateDisplayMode } from "./timeIndexSettings";
 import { isPathExcluded, normalizeExcludedFolders } from "./timeIndexSettings";
@@ -216,12 +216,18 @@ export class TimeIndex implements ITimeIndex {
     // }
 
     sortNotes(items: NoteAttributes[], desc = false): NoteAttributes[] {
-        const res = items.sort((a,b)=>
-            (a.time-b.time)  
-        )
-        if(desc){
-            res.reverse();
-        }
+        const settings = getChronologySettings();
+        const res = items.sort((a,b)=> {
+            const propertyOrder = compareDisplayedPropertyItemLists(
+                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(a.note), settings.displayedProperties),
+                getDisplayedPropertyItems(this.app.metadataCache.getFileCache(b.note), settings.displayedProperties)
+            );
+            if (propertyOrder !== 0) {
+                return propertyOrder;
+            }
+
+            return desc ? b.time-a.time : a.time-b.time;
+        })
         return res;
     }
 
