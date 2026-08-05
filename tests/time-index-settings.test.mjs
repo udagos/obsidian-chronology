@@ -54,6 +54,7 @@ try {
 		normalizeDisplayedProperties,
 		normalizeFilterQuery,
 		normalizeFilterState,
+		resolveNoteStatusEmoji,
 	} = await import(pathToFileURL(filterOutputFile).href);
 
 	const file = { path: "Projects/Client/a.md" };
@@ -82,6 +83,27 @@ try {
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["status", "owner", "missing"]), ["Ada", "draft"]);
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["up", "next", "#work"]), ["#work"]);
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["obsidian-note-status"]), ["📌"]);
+
+	// Test note-status emoji resolution
+	assert.equal(resolveNoteStatusEmoji("obsidian-note-status", "digital-garden-workflow:seed"), "🌰");
+	assert.equal(resolveNoteStatusEmoji("obsidian-note-status", "seed"), "🌰");
+	assert.equal(resolveNoteStatusEmoji("obsidian-note-status", "sprout"), "🌱");
+	assert.equal(resolveNoteStatusEmoji("obsidian-note-status", "inProgress"), "🔧");
+
+	const gardenMeta = {
+		frontmatter: {
+			"obsidian-note-status": "digital-garden-workflow:seed"
+		}
+	};
+	assert.deepEqual(getDisplayedPropertyItems(gardenMeta, ["obsidian-note-status"]), [
+		{
+			kind: "property",
+			name: "obsidian-note-status",
+			label: "🌰",
+			title: "obsidian-note-status: digital-garden-workflow:seed",
+			sortKey: "digital-garden-workflow:seed"
+		}
+	]);
 
 	assert.deepEqual(getDisplayedPropertyItems(metadata, ["status", "owner", "#work"]), [
 		{ kind: "property", name: "owner", label: "Ada", title: "owner", sortKey: "Ada" },

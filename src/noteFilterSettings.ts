@@ -203,13 +203,164 @@ function getDisplayedPropertyItemsForName(metadata: CachedMetadata | null | unde
         return [];
     }
 
+    const emoji = resolveNoteStatusEmoji(name, text);
+    const label = emoji ? emoji : text;
+
     return [{
         kind: "property",
         name,
-        label: text,
-        title: name,
+        label,
+        title: emoji ? `${name}: ${text}` : name,
         sortKey: normalizeSortText(text)
     }];
+}
+
+export function resolveNoteStatusEmoji(propertyName: string, valueText: string): string | undefined {
+    if (!valueText) return undefined;
+
+    const emojiRegex = /(\p{Extended_Pictographic}|\p{Emoji_Presentation})/u;
+    if (emojiRegex.test(valueText)) {
+        return valueText.trim();
+    }
+
+    // Only map text to status emoji for obsidian-note-status property
+    const isStatusProp = propertyName === "obsidian-note-status" ||
+                         propertyName.toLowerCase() === "obsidian-note-status" ||
+                         propertyName.toLowerCase() === "note-status";
+
+    if (!isStatusProp) {
+        return undefined;
+    }
+
+    const parts = valueText.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 1) {
+        const resolvedParts = parts.map((part) => resolveSingleStatusEmoji(propertyName, part) || part);
+        if (resolvedParts.some((p) => emojiRegex.test(p))) {
+            return resolvedParts.join(" ");
+        }
+        return undefined;
+    }
+
+    return resolveSingleStatusEmoji(propertyName, valueText);
+}
+
+function resolveSingleStatusEmoji(propertyName: string, statusIdentifier: string): string | undefined {
+    const raw = statusIdentifier.trim();
+    if (!raw) return undefined;
+
+    let templateId: string | undefined;
+    let statusName = raw;
+
+    if (raw.includes(":")) {
+        const idx = raw.indexOf(":");
+        templateId = raw.slice(0, idx).trim();
+        statusName = raw.slice(idx + 1).trim();
+    }
+
+    // 1. Dynamic lookup from active obsidian-note-status plugin instance if available
+    try {
+        const appObj = typeof window !== "undefined" ? (window as any).app : undefined;
+        if (appObj?.plugins) {
+            const plugin = appObj.plugins.getPlugin?.("obsidian-note-status") || appObj.plugins.plugins?.["obsidian-note-status"];
+            if (plugin?.settings) {
+                const settings = plugin.settings;
+                const tagPrefix = settings.tagPrefix || "obsidian-note-status";
+                const isStatusProp = propertyName === tagPrefix || propertyName === "obsidian-note-status" || propertyName.toLowerCase().includes("status");
+
+                if (isStatusProp) {
+                    if (Array.isArray(settings.customStatuses)) {
+                        const match = settings.customStatuses.find((s: any) =>
+                            s && (s.name === statusName || s.name?.toLowerCase() === statusName.toLowerCase())
+                        );
+                        if (match?.icon) return match.icon;
+                    }
+
+                    if (Array.isArray(settings.templates)) {
+                        if (templateId) {
+                            const tmpl = settings.templates.find((t: any) => t && (t.id === templateId || t.name === templateId));
+                            if (tmpl && Array.isArray(tmpl.statuses)) {
+                                const match = tmpl.statuses.find((s: any) =>
+                                    s && (s.name === statusName || s.name?.toLowerCase() === statusName.toLowerCase())
+                                );
+                                if (match?.icon) return match.icon;
+                            }
+                        }
+
+                        for (const tmpl of settings.templates) {
+                            if (tmpl && Array.isArray(tmpl.statuses)) {
+                                const match = tmpl.statuses.find((s: any) =>
+                                    s && (s.name === statusName || s.name?.toLowerCase() === statusName.toLowerCase())
+                                );
+                                if (match?.icon) return match.icon;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        // Fallback to built-in dictionary
+    }
+
+    // 2. Built-in predefined templates dictionary fallback
+    const BUILTIN_STATUS_MAP: Record<string, string> = {
+        // Digital Garden Workflow
+        "seed": "🌰",
+        "sprout": "🌱",
+        "sapling": "🌿",
+        "tree": "🌲",
+        "map": "🗺️",
+        "compost": "🍂",
+        "flower": "🌸",
+        "fruit": "🍎",
+        // Academic Research
+        "research": "🔍",
+        "outline": "📑",
+        "draft": "✏️",
+        "revision": "📝",
+        "final": "📚",
+        "published": "🎓",
+        // Colorful Workflow
+        "idea": "💡",
+        "inprogress": "🔧",
+        "in-progress": "🔧",
+        "editing": "🖊️",
+        "pending": "⏳",
+        "onhold": "⏸",
+        "on-hold": "⏸",
+        "needsupdate": "🔄",
+        "completed": "✅",
+        "archived": "📦",
+        // Creative Writing
+        "first-draft": "✍️",
+        "final-polish": "✨",
+        // Starter / Minimal
+        "todo": "📌",
+        "done": "✓",
+        // Project Management
+        "planning": "🗓️",
+        "backlog": "📋",
+        "ready": "🚦",
+        "indevelopment": "👨‍💻",
+        "testing": "🧪",
+        "approved": "👍",
+        "live": "🚀",
+        // Research note
+        "first pass": "🕵️",
+        "second pass": "🕵️‍♀️",
+        "complete": "✅"
+    };
+
+    if (BUILTIN_STATUS_MAP[statusName]) {
+        return BUILTIN_STATUS_MAP[statusName];
+    }
+
+    const lowerName = statusName.toLowerCase();
+    if (BUILTIN_STATUS_MAP[lowerName]) {
+        return BUILTIN_STATUS_MAP[lowerName];
+    }
+
+    return undefined;
 }
 
 function formatPropertyValue(value: unknown): string | undefined {
