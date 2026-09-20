@@ -153,6 +153,63 @@ If your plugin does not need CSS, delete this file.
     color: var(--text-muted);
     font-size: 12px;
     line-height: 1;
+    flex: 0 0 auto;
+}
+
+.chronology-filter-preset-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-height: 24px;
+    max-height: 24px;
+    padding: 0 6px;
+    font-size: 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    max-width: 90px;
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.chronology-filter-preset-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.chronology-filter-preset-btn.chronology-filter-preset-active {
+    border-color: var(--interactive-accent);
+    color: var(--text-normal);
+}
+
+.chronology-filter-preset-btn.chronology-filter-preset-dirty {
+    border-color: var(--text-accent);
+    color: var(--text-accent);
+}
+
+.chronology-filter-preset-icon {
+    font-size: 11px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.chronology-filter-preset-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1;
+    font-size: 12px;
+}
+
+.chronology-filter-preset-arrow {
+    font-size: 8px;
+    line-height: 1;
+    opacity: 0.7;
+    flex-shrink: 0;
 }
 
 .chronology-sort-btn {

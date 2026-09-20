@@ -52,10 +52,48 @@ try {
 		getDisplayedPropertyValues,
 		matchesNoteFilter,
 		normalizeDisplayedProperties,
+		normalizeFilterPresets,
 		normalizeFilterQuery,
 		normalizeFilterState,
 		resolveNoteStatusEmoji,
 	} = await import(pathToFileURL(filterOutputFile).href);
+
+	const rawPresets = [
+		{
+			id: "preset-1",
+			name: "Work Preset",
+			dateDisplayMode: "created",
+			filterKind: "property",
+			filterQuery: "status:done",
+			filterInvert: false,
+			sortByTime: true,
+			sortDesc: true,
+		},
+		{
+			// invalid/empty fields
+			id: "",
+			name: "",
+			dateDisplayMode: "invalid",
+			filterKind: "unexpected",
+			filterQuery: 123,
+			filterInvert: "yes",
+			sortByTime: null,
+			sortDesc: false,
+		}
+	];
+	const normalizedPresets = normalizeFilterPresets(rawPresets);
+	assert.equal(normalizedPresets.length, 2);
+	assert.equal(normalizedPresets[0].name, "Work Preset");
+	assert.equal(normalizedPresets[0].dateDisplayMode, "created");
+	assert.equal(normalizedPresets[0].filterKind, "property");
+	assert.equal(normalizedPresets[0].sortByTime, true);
+	assert.equal(normalizedPresets[1].name, "未命名预设");
+	assert.equal(normalizedPresets[1].dateDisplayMode, "both");
+	assert.equal(normalizedPresets[1].filterKind, "all");
+	assert.equal(normalizedPresets[1].filterQuery, "");
+	assert.equal(normalizedPresets[1].filterInvert, false);
+	assert.equal(normalizedPresets[1].sortDesc, false);
+	assert.deepEqual(normalizeFilterPresets(null), []);
 
 	const file = { path: "Projects/Client/a.md" };
 	const metadata = {

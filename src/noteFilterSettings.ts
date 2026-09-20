@@ -1,7 +1,48 @@
 import type { CachedMetadata, TFile } from "obsidian";
-import { isPathExcluded, normalizeExcludedFolders } from "./timeIndexSettings";
+import { isPathExcluded, normalizeDateDisplayMode, normalizeExcludedFolders } from "./timeIndexSettings";
+import type { DateDisplayMode } from "./timeIndexSettings";
 
 export type NoteFilterKind = "all" | "tag" | "property" | "folder";
+
+export interface FilterPreset {
+    readonly id: string;
+    readonly name: string;
+    readonly dateDisplayMode: DateDisplayMode;
+    readonly filterKind: NoteFilterKind;
+    readonly filterQuery: string;
+    readonly filterInvert: boolean;
+    readonly sortByTime: boolean;
+    readonly sortDesc: boolean;
+}
+
+export function normalizeFilterPresets(presets: unknown): FilterPreset[] {
+    if (!Array.isArray(presets)) {
+        return [];
+    }
+    const result: FilterPreset[] = [];
+    for (const item of presets) {
+        if (!item || typeof item !== "object") continue;
+        const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : String(Date.now() + Math.random());
+        const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : "未命名预设";
+        const dateDisplayMode = normalizeDateDisplayMode(item.dateDisplayMode);
+        const filterKind = normalizeFilterKind(item.filterKind);
+        const filterQuery = typeof item.filterQuery === "string" ? item.filterQuery : "";
+        const filterInvert = item.filterInvert === true;
+        const sortByTime = item.sortByTime === true;
+        const sortDesc = item.sortDesc !== false;
+        result.push({
+            id,
+            name,
+            dateDisplayMode,
+            filterKind,
+            filterQuery,
+            filterInvert,
+            sortByTime,
+            sortDesc
+        });
+    }
+    return result;
+}
 
 export interface NoteFilterState {
     readonly kind: NoteFilterKind;

@@ -2,13 +2,13 @@
 import { CalendarView, CALENDAR_VIEW } from './Views/CalendarView';
 import { App, Modal, Plugin } from 'obsidian';
 import { ChronologySettingTab } from 'src/ChronologySettingTab';
-import { DEFAULT_NOTE_FILTER_STATE, normalizeDisplayedProperties, normalizeFilterState } from './noteFilterSettings';
-import type { NoteFilterState } from './noteFilterSettings';
+import { DEFAULT_NOTE_FILTER_STATE, normalizeDisplayedProperties, normalizeFilterPresets, normalizeFilterState } from './noteFilterSettings';
+import type { FilterPreset, NoteFilterState } from './noteFilterSettings';
 import type { DateDisplayMode } from './timeIndexSettings';
 import { normalizeDateDisplayMode, normalizeExcludedFolders } from './timeIndexSettings';
 
 
-interface ChronologyPluginSettings {
+export interface ChronologyPluginSettings {
     addRibbonIcon: boolean;
     launchOnStartup: boolean;
     use24Hours: boolean;
@@ -24,6 +24,10 @@ interface ChronologyPluginSettings {
     lockedNoteFilter: NoteFilterState;
     displayedProperties: string[];
     sortByProperty: string;
+    sortByTime: boolean;
+    sortDesc: boolean;
+    presets: FilterPreset[];
+    activePresetId?: string | null;
 }
 
 const DEFAULT_SETTINGS: ChronologyPluginSettings = {
@@ -42,12 +46,30 @@ const DEFAULT_SETTINGS: ChronologyPluginSettings = {
     lockedNoteFilter: DEFAULT_NOTE_FILTER_STATE,
     displayedProperties: [],
     sortByProperty: "",
+    sortByTime: false,
+    sortDesc: true,
+    presets: [],
+    activePresetId: null,
 }
 
 let expSettings: ChronologyPluginSettings;
 let expPlugin: ChronologyPlugin | undefined;
 
 export function getChronologySettings(){return expSettings;}
+export function getChronologyPlugin(){return expPlugin;}
+
+export async function updateChronologySettings(partial: Partial<ChronologyPluginSettings>) {
+    if (expPlugin) {
+        expPlugin.settings = {
+            ...expPlugin.settings,
+            ...partial,
+        };
+        expSettings = expPlugin.settings;
+        await expPlugin.saveSettings();
+    } else if (expSettings) {
+        Object.assign(expSettings, partial);
+    }
+}
 
 export default class ChronologyPlugin extends Plugin {
     settings: ChronologyPluginSettings;
@@ -111,6 +133,12 @@ export default class ChronologyPlugin extends Plugin {
         this.settings.dateDisplayMode = normalizeDateDisplayMode(this.settings.dateDisplayMode);
         this.settings.lockedNoteFilter = normalizeFilterState(this.settings.lockedNoteFilter);
         this.settings.displayedProperties = normalizeDisplayedProperties(this.settings.displayedProperties);
+        this.settings.sortByTime = this.settings.sortByTime === true;
+        this.settings.sortDesc = this.settings.sortDesc !== false;
+        this.settings.presets = normalizeFilterPresets(this.settings.presets);
+        if (this.settings.activePresetId && !this.settings.presets.some((p) => p.id === this.settings.activePresetId)) {
+            this.settings.activePresetId = null;
+        }
         expSettings = this.settings;
     }
 
