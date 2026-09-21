@@ -155,13 +155,13 @@ export function matchesNoteFilter(file: FileLike, metadata: MetadataLike | null 
     return filter.invert ? !matched : matched;
 }
 
-export function getDisplayedPropertyValues(metadata: CachedMetadata | null | undefined, propertyNames: readonly string[]): string[] {
-    return getDisplayedPropertyItems(metadata, propertyNames).map((item) => item.label);
+export function getDisplayedPropertyValues(metadata: CachedMetadata | null | undefined, propertyNames: readonly string[], file?: FileLike | null): string[] {
+    return getDisplayedPropertyItems(metadata, propertyNames, file).map((item) => item.label);
 }
 
-export function getDisplayedPropertyItems(metadata: CachedMetadata | null | undefined, propertyNames: readonly string[]): DisplayedPropertyItem[] {
+export function getDisplayedPropertyItems(metadata: CachedMetadata | null | undefined, propertyNames: readonly string[], file?: FileLike | null): DisplayedPropertyItem[] {
     return propertyNames
-        .flatMap((name) => getDisplayedPropertyItemsForName(metadata, name))
+        .flatMap((name) => getDisplayedPropertyItemsForName(metadata, name, file))
         .sort(compareDisplayedPropertyItems);
 }
 
@@ -227,7 +227,7 @@ function matchesFilterQuery(file: FileLike, metadata: MetadataLike | null | unde
         case "tag":
             return matchesTag(metadata, filter.query);
         case "property":
-            return matchesProperty(metadata, filter.query);
+            return matchesProperty(metadata, filter.query, file);
         case "folder":
             return matchesFolder(file, filter.query);
         case "all":
@@ -636,6 +636,110 @@ function compareNumbers(actual: number, operator: string, target: number): boole
     }
 }
 
+export interface BreadcrumbsEdgeInfo {
+    readonly targetPath: string;
+    readonly targetBasename: string;
+    readonly edgeType: string;
+    readonly explicit: boolean;
+}
+
+export function getBreadcrumbsPluginInstance(): unknown {
+    if (typeof window === "undefined") return undefined;
+    const win = window as unknown as Record<string, unknown>;
+    const bcApi = win.BCAPI as { plugin?: unknown } | undefined;
+    if (bcApi?.plugin) {
+        return bcApi.plugin;
+    }
+    const appObj = win.app as { plugins?: { getPlugin?: (id: string) => unknown; plugins?: Record<string, unknown> } } | undefined;
+    if (appObj?.plugins) {
+        if (typeof appObj.plugins.getPlugin === "function") {
+            const p = appObj.plugins.getPlugin("breadcrumbs");
+            if (p) return p;
+        }
+        if (appObj.plugins.plugins && appObj.plugins.plugins["breadcrumbs"]) {
+            return appObj.plugins.plugins["breadcrumbs"];
+        }
+    }
+    return undefined;
+}
+
+export function getBreadcrumbsOutgoingEdges(filePath: string, fieldName: string): BreadcrumbsEdgeInfo[] {
+    if (!filePath || !fieldName) return [];
+    const plugin = getBreadcrumbsPluginInstance() as {
+        graph?: {
+            has_node?: (path: string) => boolean;
+            edge_types?: () => string[];
+            get_filtered_outgoing_edges?: (node: string, edgeTypes?: string[] | null) => {
+                get_edges?: () => Array<{
+                    edge_type?: string;
+                    target_path?: (graph: unknown) => string;
+                    explicit?: (graph: unknown) => boolean;
+                }>;
+                to_array?: () => Array<{
+                    edge_type?: string;
+                    target_path?: (graph: unknown) => string;
+                    explicit?: (graph: unknown) => boolean;
+                }>;
+            };
+        };
+    } | undefined;
+
+    const graph = plugin?.graph;
+    if (!graph || typeof graph.get_filtered_outgoing_edges !== "function") {
+        return [];
+    }
+
+    if (typeof graph.has_node === "function" && !graph.has_node(filePath)) {
+        return [];
+    }
+
+    let fieldsToQuery = [fieldName];
+    if (typeof graph.edge_types === "function") {
+        try {
+            const allTypes = graph.edge_types();
+            if (Array.isArray(allTypes)) {
+                const lowerTarget = fieldName.toLowerCase();
+                const matched = allTypes.filter((t) => typeof t === "string" && t.toLowerCase() === lowerTarget);
+                if (matched.length > 0) {
+                    fieldsToQuery = matched;
+                }
+            }
+        } catch {
+            // Ignore edge_types lookup error
+        }
+    }
+
+    try {
+        const edgeList = graph.get_filtered_outgoing_edges(filePath, fieldsToQuery);
+        if (!edgeList) return [];
+        const rawEdges = typeof edgeList.get_edges === "function"
+            ? edgeList.get_edges()
+            : (typeof edgeList.to_array === "function" ? edgeList.to_array() : []);
+
+        const results: BreadcrumbsEdgeInfo[] = [];
+        for (const edge of rawEdges) {
+            const targetPath = typeof edge.target_path === "function"
+                ? edge.target_path(graph)
+                : (typeof (edge as unknown as { target?: string }).target === "string"
+                    ? (edge as unknown as { target: string }).target
+                    : "");
+            if (!targetPath) continue;
+            const targetBasename = targetPath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? targetPath;
+            const edgeType = edge.edge_type ?? fieldName;
+            const explicit = typeof edge.explicit === "function" ? edge.explicit(graph) : true;
+            results.push({
+                targetPath,
+                targetBasename,
+                edgeType,
+                explicit
+            });
+        }
+        return results;
+    } catch {
+        return [];
+    }
+}
+
 function getFrontmatterProperty(frontmatter: Record<string, unknown>, propName: string): { exists: boolean; value: unknown } {
     if (propName in frontmatter) {
         return { exists: true, value: frontmatter[propName] };
@@ -649,13 +753,36 @@ function getFrontmatterProperty(frontmatter: Record<string, unknown>, propName: 
     return { exists: false, value: undefined };
 }
 
-function matchesSinglePropertyCondition(frontmatter: Record<string, unknown>, condition: ParsedPropertyCondition): boolean {
-    const prop = getFrontmatterProperty(frontmatter, condition.propertyName);
-    if (!prop.exists) {
-        return false;
+function matchesSinglePropertyCondition(
+    frontmatter: Record<string, unknown> | undefined,
+    condition: ParsedPropertyCondition,
+    file?: FileLike | null
+): boolean {
+    let hasProp = false;
+    let actualValue: unknown = undefined;
+
+    if (frontmatter) {
+        const prop = getFrontmatterProperty(frontmatter, condition.propertyName);
+        if (prop.exists) {
+            hasProp = true;
+            actualValue = prop.value;
+        }
     }
 
-    const actualValue = prop.value;
+    if (!hasProp && file?.path) {
+        const bcEdges = getBreadcrumbsOutgoingEdges(file.path, condition.propertyName);
+        if (bcEdges.length > 0) {
+            hasProp = true;
+            const targetBasenames = bcEdges.map((e) => e.targetBasename);
+            const targetWikilinks = bcEdges.map((e) => `[[${e.targetBasename}]]`);
+            const targetPaths = bcEdges.map((e) => e.targetPath);
+            actualValue = [...new Set([...targetBasenames, ...targetWikilinks, ...targetPaths])];
+        }
+    }
+
+    if (!hasProp) {
+        return false;
+    }
 
     switch (condition.kind) {
         case "presence":
@@ -724,23 +851,19 @@ function matchesSinglePropertyCondition(frontmatter: Record<string, unknown>, co
     }
 }
 
-function evalPropertyAtom(metadata: MetadataLike | null | undefined, raw: string): boolean {
+function evalPropertyAtom(metadata: MetadataLike | null | undefined, raw: string, file?: FileLike | null): boolean {
     const cond = parsePropertyQuery(raw);
     if (!cond) return true;
 
     const frontmatter = metadata?.frontmatter;
-    if (!frontmatter) {
-        return cond.invert;
-    }
-
-    const matched = matchesSinglePropertyCondition(frontmatter, cond);
+    const matched = matchesSinglePropertyCondition(frontmatter, cond, file);
     return cond.invert ? !matched : matched;
 }
 
-export function matchesProperty(metadata: MetadataLike | null | undefined, queries: readonly string[]): boolean {
+export function matchesProperty(metadata: MetadataLike | null | undefined, queries: readonly string[], file?: FileLike | null): boolean {
     const ast = parseFilterQueries(queries);
     if (!ast) return true;
-    return evaluateAst(ast, (raw) => evalPropertyAtom(metadata, raw));
+    return evaluateAst(ast, (raw) => evalPropertyAtom(metadata, raw, file));
 }
 
 export function splitPropertyQuery(query: string): readonly [string, string] {
@@ -758,12 +881,22 @@ export function splitPropertyQuery(query: string): readonly [string, string] {
     return [trimmed, ""];
 }
 
-function getDisplayedPropertyItemsForName(metadata: CachedMetadata | null | undefined, name: string): DisplayedPropertyItem[] {
+function getDisplayedPropertyItemsForName(metadata: CachedMetadata | null | undefined, name: string, file?: FileLike | null): DisplayedPropertyItem[] {
     if (name.startsWith("#")) {
         return getDisplayedTagValue(metadata, name);
     }
 
-    const value = metadata?.frontmatter?.[name];
+    let value = metadata?.frontmatter?.[name];
+    let isBreadcrumbs = false;
+
+    if ((value === undefined || value === null || value === "") && file?.path) {
+        const bcEdges = getBreadcrumbsOutgoingEdges(file.path, name);
+        if (bcEdges.length > 0) {
+            value = [...new Set(bcEdges.map((e) => e.targetBasename))];
+            isBreadcrumbs = true;
+        }
+    }
+
     const text = formatPropertyValue(value);
     if (text === undefined) {
         return [];
@@ -776,7 +909,7 @@ function getDisplayedPropertyItemsForName(metadata: CachedMetadata | null | unde
         kind: "property",
         name,
         label,
-        title: emoji ? `${name}: ${text}` : name,
+        title: emoji ? `${name}: ${text}` : (isBreadcrumbs ? `${name}: ${text} (Breadcrumbs)` : name),
         sortKey: normalizeSortText(text)
     }];
 }

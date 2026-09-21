@@ -257,6 +257,80 @@ try {
 	]);
 	assert.equal(compareDisplayedPropertyItemLists(getDisplayedPropertyItems(metadata, ["status"]), []), -1);
 	assert.equal(compareDisplayedPropertyItemLists([], getDisplayedPropertyItems(metadata, ["status"])), 1);
+
+	// Test Breadcrumbs implied edge (e.g. sumed) resolution
+	const mockBcGraph = {
+		has_node(path) {
+			return path === "b.md";
+		},
+		edge_types() {
+			return ["sum", "sumed", "up", "down"];
+		},
+		get_filtered_outgoing_edges(node, edgeTypes) {
+			if (node === "b.md" && edgeTypes.map((t) => t.toLowerCase()).includes("sumed")) {
+				return {
+					get_edges() {
+						return [
+							{
+								edge_type: "sumed",
+								target_path(g) {
+									return "Notes/a.md";
+								},
+								explicit(g) {
+									return false;
+								},
+							},
+						];
+					},
+				};
+			}
+			return {
+				get_edges() {
+					return [];
+				},
+			};
+		},
+	};
+
+	globalThis.window = {
+		BCAPI: {
+			plugin: {
+				graph: mockBcGraph,
+			},
+		},
+	};
+
+	try {
+		const fileB = { path: "b.md" };
+		const fileC = { path: "c.md" };
+		const emptyMeta = { frontmatter: {} };
+
+		// File b has no explicit sumed in frontmatter, but Breadcrumbs graph has implied edge sumed -> a
+		assert.equal(matchesNoteFilter(fileB, emptyMeta, { kind: "property", query: ["sumed"], invert: false }), true);
+		assert.equal(matchesNoteFilter(fileB, emptyMeta, { kind: "property", query: ["sumed: a"], invert: false }), true);
+		assert.equal(matchesNoteFilter(fileB, emptyMeta, { kind: "property", query: ["sumed: [[a]]"], invert: false }), true);
+		assert.equal(matchesNoteFilter(fileB, emptyMeta, { kind: "property", query: ["sumed: Notes/a.md"], invert: false }), true);
+		assert.equal(matchesNoteFilter(fileB, emptyMeta, { kind: "property", query: ["sumed: z"], invert: false }), false);
+		assert.equal(matchesNoteFilter(fileB, emptyMeta, { kind: "property", query: ["~sumed: z"], invert: false }), true);
+
+		// File c has no sumed edge in graph
+		assert.equal(matchesNoteFilter(fileC, emptyMeta, { kind: "property", query: ["sumed"], invert: false }), false);
+		assert.equal(matchesNoteFilter(fileC, emptyMeta, { kind: "property", query: ["~sumed"], invert: false }), true);
+
+		// Displayed properties for fileB should show Breadcrumbs target "a"
+		const displayedBcItems = getDisplayedPropertyItems(emptyMeta, ["sumed"], fileB);
+		assert.deepEqual(displayedBcItems, [
+			{
+				kind: "property",
+				name: "sumed",
+				label: "a",
+				title: "sumed: a (Breadcrumbs)",
+				sortKey: "a",
+			},
+		]);
+	} finally {
+		delete globalThis.window;
+	}
 } finally {
 	await rm(tempDir, { recursive: true, force: true });
 }

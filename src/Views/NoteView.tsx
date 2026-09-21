@@ -25,7 +25,7 @@ export const NoteView = ({ item, onOpen, extraInfo = true }:
     const settings = getChronologySettings();
     const dateLabel = item.attribute === DateAttribute.Created ? "新建" : "修改";
     const metadata = app.metadataCache.getFileCache(item.note);
-    const propertyItems = getDisplayedPropertyItems(metadata, settings.displayedProperties);
+    const propertyItems = getDisplayedPropertyItems(metadata, settings.displayedProperties, item.note);
 
     const desc = `${item.attribute === DateAttribute.Created ? "Created" : "Modified"} ${time.format("LLL")}`;
 

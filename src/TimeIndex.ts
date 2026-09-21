@@ -224,8 +224,8 @@ export class TimeIndex implements ITimeIndex {
         const res = items.sort((a,b)=> {
             if (!sortByTime && sortProps.length > 0) {
                 const propertyOrder = compareDisplayedPropertyItemLists(
-                    getDisplayedPropertyItems(this.app.metadataCache.getFileCache(a.note), sortProps),
-                    getDisplayedPropertyItems(this.app.metadataCache.getFileCache(b.note), sortProps)
+                    getDisplayedPropertyItems(this.app.metadataCache.getFileCache(a.note), sortProps, a.note),
+                    getDisplayedPropertyItems(this.app.metadataCache.getFileCache(b.note), sortProps, b.note)
                 );
                 if (propertyOrder !== 0) {
                     return propertyOrder;
