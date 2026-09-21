@@ -87,21 +87,63 @@ export function normalizeFilterState(value: Partial<NoteFilterState> | undefined
     };
 }
 
+function splitTopLevelCommas(input: string): string[] {
+    const results: string[] = [];
+    let current = "";
+    let depth = 0;
+
+    for (let i = 0; i < input.length; i++) {
+        const ch = input[i];
+        if (ch === "(" || ch === "（") {
+            depth++;
+            current += ch;
+        } else if (ch === ")" || ch === "）") {
+            if (depth > 0) depth--;
+            current += ch;
+        } else if ((ch === "," || ch === "，" || ch === "\n") && depth === 0) {
+            const trimmed = current.trim();
+            if (trimmed) {
+                results.push(trimmed);
+            }
+            current = "";
+        } else {
+            current += ch;
+        }
+    }
+
+    const lastTrimmed = current.trim();
+    if (lastTrimmed) {
+        results.push(lastTrimmed);
+    }
+
+    return results;
+}
+
 export function normalizeFilterQuery(values: readonly string[] | string | undefined): string[] {
     if (!values) {
         return [];
     }
 
-    const rawValues = typeof values === "string" ? values.split(/[\n,]/) : values;
-    const normalized = new Set<string>();
-    for (const value of rawValues) {
-        const trimmed = value.trim();
-        if (trimmed) {
-            normalized.add(trimmed);
+    const rawList: string[] = [];
+    if (typeof values === "string") {
+        rawList.push(...splitTopLevelCommas(values));
+    } else {
+        for (const item of values) {
+            if (typeof item === "string") {
+                rawList.push(...splitTopLevelCommas(item));
+            }
         }
     }
 
-    return [...normalized];
+    const normalized: string[] = [];
+    for (const value of rawList) {
+        const trimmed = value.trim();
+        if (trimmed && !normalized.includes(trimmed)) {
+            normalized.push(trimmed);
+        }
+    }
+
+    return normalized;
 }
 
 export function matchesNoteFilter(file: FileLike, metadata: MetadataLike | null | undefined, filter: NoteFilterState): boolean {
@@ -187,7 +229,7 @@ function matchesFilterQuery(file: FileLike, metadata: MetadataLike | null | unde
         case "property":
             return matchesProperty(metadata, filter.query);
         case "folder":
-            return isPathExcluded(file.path, normalizeExcludedFolders(filter.query));
+            return matchesFolder(file, filter.query);
         case "all":
             return true;
         default:
@@ -195,42 +237,525 @@ function matchesFilterQuery(file: FileLike, metadata: MetadataLike | null | unde
     }
 }
 
-function matchesTag(metadata: MetadataLike | null | undefined, queries: readonly string[]): boolean {
-    const tags = new Set<string>();
-    metadata?.tags?.forEach((tag) => tags.add(normalizeTag(tag.tag)));
-    const frontmatterTags = metadata?.frontmatter?.tags;
-    readFrontmatterTags(frontmatterTags).forEach((tag) => tags.add(normalizeTag(tag)));
-    return queries.some((query) => tags.has(normalizeTag(query)));
+export type FilterAstNode =
+    | { type: "or"; children: FilterAstNode[] }
+    | { type: "and"; children: FilterAstNode[] }
+    | { type: "not"; child: FilterAstNode }
+    | { type: "atom"; raw: string };
+
+export type TokenType = "OR" | "AND" | "NOT" | "LPAREN" | "RPAREN" | "ATOM";
+
+export interface Token {
+    type: TokenType;
+    value: string;
 }
 
-function matchesProperty(metadata: MetadataLike | null | undefined, queries: readonly string[]): boolean {
-    const frontmatter = metadata?.frontmatter;
-    if (!frontmatter) {
+export function tokenizeFilterQuery(query: string): Token[] {
+    const tokens: Token[] = [];
+    let i = 0;
+    const len = query.length;
+    let atomBuffer = "";
+
+    function flushAtom() {
+        const trimmed = atomBuffer.trim();
+        if (trimmed) {
+            tokens.push({ type: "ATOM", value: trimmed });
+        }
+        atomBuffer = "";
+    }
+
+    while (i < len) {
+        const ch = query[i];
+
+        if (ch === "(" || ch === "（") {
+            flushAtom();
+            tokens.push({ type: "LPAREN", value: ch });
+            i++;
+            continue;
+        }
+
+        if (ch === ")" || ch === "）") {
+            flushAtom();
+            tokens.push({ type: "RPAREN", value: ch });
+            i++;
+            continue;
+        }
+
+        if (ch === "&") {
+            flushAtom();
+            if (i + 1 < len && query[i + 1] === "&") {
+                i++;
+            }
+            tokens.push({ type: "AND", value: "&" });
+            i++;
+            continue;
+        }
+
+        if (ch === "," || ch === "，" || ch === "\n") {
+            flushAtom();
+            tokens.push({ type: "OR", value: ch });
+            i++;
+            continue;
+        }
+
+        if (ch === "~") {
+            if (!atomBuffer.trim()) {
+                atomBuffer = "";
+                tokens.push({ type: "NOT", value: "~" });
+                i++;
+                continue;
+            }
+            const trimmedBuf = atomBuffer.trim();
+            const lastChar = trimmedBuf.slice(-1);
+            if (/\d/.test(lastChar) || lastChar === ":") {
+                atomBuffer += ch;
+                i++;
+                continue;
+            } else {
+                flushAtom();
+                tokens.push({ type: "NOT", value: "~" });
+                i++;
+                continue;
+            }
+        }
+
+        atomBuffer += ch;
+        i++;
+    }
+
+    flushAtom();
+    return tokens;
+}
+
+function parseOr(tokens: Token[], cursor: { pos: number }): FilterAstNode | null {
+    const left = parseAnd(tokens, cursor);
+    if (!left) return null;
+
+    const children: FilterAstNode[] = [left];
+    while (cursor.pos < tokens.length && tokens[cursor.pos].type === "OR") {
+        cursor.pos++;
+        const right = parseAnd(tokens, cursor);
+        if (right) {
+            children.push(right);
+        }
+    }
+
+    return children.length === 1 ? children[0] : { type: "or", children };
+}
+
+function parseAnd(tokens: Token[], cursor: { pos: number }): FilterAstNode | null {
+    const left = parseUnary(tokens, cursor);
+    if (!left) return null;
+
+    const children: FilterAstNode[] = [left];
+    while (cursor.pos < tokens.length && tokens[cursor.pos].type === "AND") {
+        cursor.pos++;
+        const right = parseUnary(tokens, cursor);
+        if (right) {
+            children.push(right);
+        }
+    }
+
+    return children.length === 1 ? children[0] : { type: "and", children };
+}
+
+function parseUnary(tokens: Token[], cursor: { pos: number }): FilterAstNode | null {
+    if (cursor.pos < tokens.length && tokens[cursor.pos].type === "NOT") {
+        cursor.pos++;
+        const child = parseUnary(tokens, cursor);
+        if (child) {
+            return { type: "not", child };
+        }
+        return null;
+    }
+    return parsePrimary(tokens, cursor);
+}
+
+function parsePrimary(tokens: Token[], cursor: { pos: number }): FilterAstNode | null {
+    if (cursor.pos >= tokens.length) return null;
+
+    const token = tokens[cursor.pos];
+    if (token.type === "LPAREN") {
+        cursor.pos++;
+        const expr = parseOr(tokens, cursor);
+        if (cursor.pos < tokens.length && tokens[cursor.pos].type === "RPAREN") {
+            cursor.pos++;
+        }
+        return expr;
+    }
+
+    if (token.type === "ATOM") {
+        cursor.pos++;
+        return { type: "atom", raw: token.value };
+    }
+
+    cursor.pos++;
+    return null;
+}
+
+export function parseFilterExpression(query: string): FilterAstNode | null {
+    const tokens = tokenizeFilterQuery(query);
+    if (tokens.length === 0) {
+        return null;
+    }
+    const cursor = { pos: 0 };
+    return parseOr(tokens, cursor);
+}
+
+export function parseFilterQueries(queries: readonly string[]): FilterAstNode | null {
+    const validAsts: FilterAstNode[] = [];
+    for (const q of queries) {
+        const ast = parseFilterExpression(q);
+        if (ast) {
+            validAsts.push(ast);
+        }
+    }
+    if (validAsts.length === 0) return null;
+    if (validAsts.length === 1) return validAsts[0];
+    return { type: "or", children: validAsts };
+}
+
+export function evaluateAst(node: FilterAstNode, evalAtom: (raw: string) => boolean): boolean {
+    switch (node.type) {
+        case "or":
+            return node.children.length === 0 ? true : node.children.some((child) => evaluateAst(child, evalAtom));
+        case "and":
+            return node.children.every((child) => evaluateAst(child, evalAtom));
+        case "not":
+            return !evaluateAst(node.child, evalAtom);
+        case "atom":
+            return evalAtom(node.raw);
+    }
+}
+
+function isQueryInverted(query: string): boolean {
+    const trimmed = query.trim();
+    return trimmed.startsWith("~") || trimmed.startsWith("#~");
+}
+
+function stripQueryInversion(query: string): string {
+    const trimmed = query.trim();
+    if (trimmed.startsWith("#~")) {
+        return trimmed.slice(2).trim();
+    }
+    if (trimmed.startsWith("~")) {
+        return trimmed.slice(1).trim();
+    }
+    return trimmed;
+}
+
+function evalTagAtom(metadata: MetadataLike | null | undefined, raw: string): boolean {
+    const trimmed = raw.trim();
+    if (!trimmed) return true;
+    const isInverted = isQueryInverted(trimmed);
+    const tag = normalizeTag(stripQueryInversion(trimmed));
+    if (!tag) return true;
+
+    const tags = new Set<string>();
+    metadata?.tags?.forEach((t) => tags.add(normalizeTag(t.tag)));
+    const frontmatterTags = metadata?.frontmatter?.tags;
+    readFrontmatterTags(frontmatterTags).forEach((t) => tags.add(normalizeTag(t)));
+
+    const matched = tags.has(tag);
+    return isInverted ? !matched : matched;
+}
+
+export function matchesTag(metadata: MetadataLike | null | undefined, queries: readonly string[]): boolean {
+    const ast = parseFilterQueries(queries);
+    if (!ast) return true;
+    return evaluateAst(ast, (raw) => evalTagAtom(metadata, raw));
+}
+
+function evalFolderAtom(file: FileLike, raw: string): boolean {
+    const trimmed = raw.trim();
+    if (!trimmed) return true;
+    let inverted = false;
+    let path = trimmed;
+    if (path.startsWith("~")) {
+        inverted = true;
+        path = path.slice(1).trim();
+    }
+    const folders = normalizeExcludedFolders([path]);
+    const matched = isPathExcluded(file.path, folders);
+    return inverted ? !matched : matched;
+}
+
+export function matchesFolder(file: FileLike, queries: readonly string[]): boolean {
+    const ast = parseFilterQueries(queries);
+    if (!ast) return true;
+    return evaluateAst(ast, (raw) => evalFolderAtom(file, raw));
+}
+
+export interface ParsedPropertyCondition {
+    readonly propertyName: string;
+    readonly invert: boolean;
+    readonly kind: "presence" | "numeric_comparison" | "numeric_range" | "text_comparison" | "text_include";
+    readonly operator?: string;
+    readonly targetNumber?: number;
+    readonly rangeMin?: number;
+    readonly rangeMax?: number;
+    readonly targetText?: string;
+}
+
+export function parseNumericValue(value: unknown): number | null {
+    if (typeof value === "number") {
+        return Number.isNaN(value) ? null : value;
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        const num = Number(trimmed);
+        if (!Number.isNaN(num)) {
+            return num;
+        }
+        if (trimmed.endsWith("%")) {
+            const percentNum = Number(trimmed.slice(0, -1).trim());
+            if (!Number.isNaN(percentNum)) {
+                return percentNum;
+            }
+        }
+    }
+    return null;
+}
+
+export function parsePropertyQuery(query: string): ParsedPropertyCondition | null {
+    let trimmed = query.trim();
+    if (!trimmed) return null;
+
+    let invert = false;
+    if (trimmed.startsWith("~")) {
+        invert = true;
+        trimmed = trimmed.slice(1).trim();
+    }
+
+    let propertyName = "";
+    let valExpr = "";
+
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx >= 0) {
+        propertyName = trimmed.slice(0, colonIdx).trim();
+        valExpr = trimmed.slice(colonIdx + 1).trim();
+    } else {
+        const opMatch = trimmed.match(/^([^:><!=~]+?)\s*(>=|<=|!=|<>|==|=|>|<)\s*(.+)$/);
+        if (opMatch) {
+            propertyName = opMatch[1].trim();
+            valExpr = `${opMatch[2]} ${opMatch[3].trim()}`;
+        } else {
+            propertyName = trimmed;
+            valExpr = "";
+        }
+    }
+
+    if (!propertyName) return null;
+
+    if (valExpr.startsWith("~")) {
+        invert = true;
+        valExpr = valExpr.slice(1).trim();
+    }
+
+    if (!valExpr) {
+        return { propertyName, invert, kind: "presence" };
+    }
+
+    // 1. Numeric range: min..max or min~max
+    const rangeMatch = valExpr.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*(?:\.\.|~)\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
+    if (rangeMatch) {
+        const min = parseFloat(rangeMatch[1]);
+        const max = parseFloat(rangeMatch[2]);
+        return {
+            propertyName,
+            invert,
+            kind: "numeric_range",
+            rangeMin: Math.min(min, max),
+            rangeMax: Math.max(min, max)
+        };
+    }
+
+    // 2. Numeric comparison with operator: >=, <=, !=, <>, ==, =, >, <
+    const numCompMatch = valExpr.match(/^(>=|<=|!=|<>|==|=|>|<)\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
+    if (numCompMatch) {
+        const operator = numCompMatch[1];
+        const targetNumber = parseFloat(numCompMatch[2]);
+        return {
+            propertyName,
+            invert,
+            kind: "numeric_comparison",
+            operator,
+            targetNumber
+        };
+    }
+
+    // 3. Exact operator with text: ==, =, !=, <>
+    const textCompMatch = valExpr.match(/^(==|=|!=|<>)\s*(.+)$/);
+    if (textCompMatch) {
+        const operator = textCompMatch[1];
+        const targetText = textCompMatch[2].trim();
+        return {
+            propertyName,
+            invert,
+            kind: "text_comparison",
+            operator,
+            targetText
+        };
+    }
+
+    // 4. Single number without operator: e.g. "5"
+    const singleNumMatch = valExpr.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
+    if (singleNumMatch) {
+        const targetNumber = parseFloat(singleNumMatch[1]);
+        return {
+            propertyName,
+            invert,
+            kind: "numeric_comparison",
+            operator: "=",
+            targetNumber,
+            targetText: valExpr
+        };
+    }
+
+    // 5. General text inclusion
+    return {
+        propertyName,
+        invert,
+        kind: "text_include",
+        targetText: valExpr
+    };
+}
+
+function compareNumbers(actual: number, operator: string, target: number): boolean {
+    switch (operator) {
+        case ">": return actual > target;
+        case ">=": return actual >= target;
+        case "<": return actual < target;
+        case "<=": return actual <= target;
+        case "=":
+        case "==": return actual === target;
+        case "!=":
+        case "<>": return actual !== target;
+        default: return false;
+    }
+}
+
+function getFrontmatterProperty(frontmatter: Record<string, unknown>, propName: string): { exists: boolean; value: unknown } {
+    if (propName in frontmatter) {
+        return { exists: true, value: frontmatter[propName] };
+    }
+    const lower = propName.toLowerCase();
+    for (const key of Object.keys(frontmatter)) {
+        if (key.toLowerCase() === lower) {
+            return { exists: true, value: frontmatter[key] };
+        }
+    }
+    return { exists: false, value: undefined };
+}
+
+function matchesSinglePropertyCondition(frontmatter: Record<string, unknown>, condition: ParsedPropertyCondition): boolean {
+    const prop = getFrontmatterProperty(frontmatter, condition.propertyName);
+    if (!prop.exists) {
         return false;
     }
 
-    return queries.some((query) => {
-        const [name, expectedValue] = splitPropertyQuery(query);
-        if (!(name in frontmatter)) {
+    const actualValue = prop.value;
+
+    switch (condition.kind) {
+        case "presence":
+            return actualValue !== undefined && actualValue !== null && actualValue !== "";
+
+        case "numeric_range": {
+            const min = condition.rangeMin!;
+            const max = condition.rangeMax!;
+            if (Array.isArray(actualValue)) {
+                return actualValue.some((item) => {
+                    const n = parseNumericValue(item);
+                    return n !== null && n >= min && n <= max;
+                });
+            }
+            const n = parseNumericValue(actualValue);
+            return n !== null && n >= min && n <= max;
+        }
+
+        case "numeric_comparison": {
+            const op = condition.operator!;
+            const target = condition.targetNumber!;
+            if (Array.isArray(actualValue)) {
+                const numMatch = actualValue.some((item) => {
+                    const n = parseNumericValue(item);
+                    return n !== null && compareNumbers(n, op, target);
+                });
+                if (numMatch) return true;
+                if (condition.targetText && (op === "=" || op === "==")) {
+                    return actualValue.some((item) =>
+                        propertyValueToText(item).toLowerCase().includes(condition.targetText!.toLowerCase())
+                    );
+                }
+                return false;
+            }
+
+            const n = parseNumericValue(actualValue);
+            if (n !== null) {
+                return compareNumbers(n, op, target);
+            }
+            if (condition.targetText && (op === "=" || op === "==")) {
+                return propertyValueToText(actualValue).toLowerCase().includes(condition.targetText.toLowerCase());
+            }
             return false;
         }
 
-        if (!expectedValue) {
-            return true;
+        case "text_comparison": {
+            const op = condition.operator!;
+            const target = condition.targetText!.toLowerCase();
+            if (Array.isArray(actualValue)) {
+                return actualValue.some((item) => {
+                    const text = propertyValueToText(item).toLowerCase();
+                    return (op === "=" || op === "==") ? text === target : text !== target;
+                });
+            }
+            const text = propertyValueToText(actualValue).toLowerCase();
+            return (op === "=" || op === "==") ? text === target : text !== target;
         }
 
-        const actualValue = frontmatter[name];
-        return propertyValueToText(actualValue).toLowerCase().includes(expectedValue.toLowerCase());
-    });
+        case "text_include": {
+            const target = condition.targetText!.toLowerCase();
+            return propertyValueToText(actualValue).toLowerCase().includes(target);
+        }
+
+        default:
+            return false;
+    }
 }
 
-function splitPropertyQuery(query: string): readonly [string, string] {
-    const separatorIndex = query.indexOf(":");
-    if (separatorIndex < 0) {
-        return [query.trim(), ""];
+function evalPropertyAtom(metadata: MetadataLike | null | undefined, raw: string): boolean {
+    const cond = parsePropertyQuery(raw);
+    if (!cond) return true;
+
+    const frontmatter = metadata?.frontmatter;
+    if (!frontmatter) {
+        return cond.invert;
     }
 
-    return [query.slice(0, separatorIndex).trim(), query.slice(separatorIndex + 1).trim()];
+    const matched = matchesSinglePropertyCondition(frontmatter, cond);
+    return cond.invert ? !matched : matched;
+}
+
+export function matchesProperty(metadata: MetadataLike | null | undefined, queries: readonly string[]): boolean {
+    const ast = parseFilterQueries(queries);
+    if (!ast) return true;
+    return evaluateAst(ast, (raw) => evalPropertyAtom(metadata, raw));
+}
+
+export function splitPropertyQuery(query: string): readonly [string, string] {
+    const trimmed = query.trim();
+    const separatorIndex = trimmed.indexOf(":");
+    if (separatorIndex >= 0) {
+        return [trimmed.slice(0, separatorIndex).trim(), trimmed.slice(separatorIndex + 1).trim()];
+    }
+
+    const opMatch = trimmed.match(/^([^:><!=~]+?)\s*(>=|<=|!=|<>|==|=|>|<)\s*(.+)$/);
+    if (opMatch) {
+        return [opMatch[1].trim(), `${opMatch[2]} ${opMatch[3].trim()}`];
+    }
+
+    return [trimmed, ""];
 }
 
 function getDisplayedPropertyItemsForName(metadata: CachedMetadata | null | undefined, name: string): DisplayedPropertyItem[] {

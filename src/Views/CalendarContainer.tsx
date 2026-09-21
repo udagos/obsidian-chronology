@@ -359,7 +359,8 @@ export const CalendarContainer = ({date, onOpen}:CalendarContainerProps) => {
                         className="chronology-filter-query"
                         value={filterQuery}
                         onChange={handleFilterQuery}
-                        placeholder="多个用逗号分隔"
+                        placeholder="逗号为或，&为且，支持()与~"
+                        title="逗号(,)为或，&为且，支持括号()分组，~代表反选，属性支持数字比较（如 >3, <=5, 1..5）"
                         disabled={filterKind === "all"}
                     />
                     <label className="chronology-filter-check" title="反向筛选">

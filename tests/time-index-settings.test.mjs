@@ -107,6 +107,7 @@ try {
 	};
 
 	assert.deepEqual(normalizeFilterQuery(" work,\nproject "), ["work", "project"]);
+	assert.deepEqual(normalizeFilterQuery("work，~project，archive"), ["work", "~project", "archive"]);
 	assert.deepEqual(normalizeDisplayedProperties("status\nowner,#rew"), ["status", "owner", "#rew"]);
 	assert.deepEqual(normalizeFilterState({ kind: "tag", query: ["work"], invert: true }), {
 		kind: "tag",
@@ -118,6 +119,112 @@ try {
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "property", query: ["status:dra"], invert: false }), true);
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Client"], invert: false }), true);
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects/Clientele"], invert: false }), false);
+
+	// Tests for ~ negation and & (AND) in tag filter
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["~work"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["~archive"], invert: false }), true);
+	// Comma is OR: "work, ~project" is true because file has work
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["work", "~project"], invert: false }), true);
+	// & is AND: "work & ~project" is false because file has project
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["work & ~project"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["work & ~archive"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["~#work"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["#~archive"], invert: false }), true);
+	// Parentheses grouping in tag filter:
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["(work, life) & ~archive"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["(work, life) & ~project"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "tag", query: ["(life, personal) & work"], invert: false }), false);
+
+	// Tests for ~ negation, & (AND), and parentheses in folder filter
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects & ~Projects/Client"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects & ~Projects/Archive"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Projects, Personal"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["~Projects/Client"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["~Archive"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["(Projects, Archive) & ~Projects/Client"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["(Projects, Archive) & ~Projects/Old"], invert: false }), true);
+
+	// Tests for numeric comparison and ~ negation in property filter
+	const numFile = { path: "Notes/task.md" };
+	const numMetadata = {
+		frontmatter: {
+			priority: 3,
+			rating: 4.5,
+			score: "85",
+			temp: -5,
+			counts: [2, 7, 10],
+			status: "done",
+			archived: false,
+		}
+	};
+
+	// Greater than (> and >=)
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: > 2"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: > 3"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: >= 3"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: >= 4"], invert: false }), false);
+
+	// Less than (< and <=)
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: < 4"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: < 3"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: <= 3"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: <= 2"], invert: false }), false);
+
+	// Equal (= and ==)
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: = 3"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: == 3"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: = 4"], invert: false }), false);
+
+	// Not equal (!= and <>)
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: != 4"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: != 3"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: <> 3"], invert: false }), false);
+
+	// Range (.. and ~)
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: 1..5"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: 1~5"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: 4..10"], invert: false }), false);
+
+	// Query syntax without colon
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority > 2"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority <= 2"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority = 3"], invert: false }), true);
+
+	// String numeric parsing, floats, negative numbers, arrays
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["score: >= 80"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["score: > 90"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["rating: >= 4.0"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["rating: < 4.0"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["temp: < 0"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["temp: >= 0"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["counts: > 9"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["counts: > 15"], invert: false }), false);
+
+	// Property boolean expressions with comma (OR), & (AND), ~, and parentheses ()
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["~priority: > 2"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["~priority: > 5"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: ~> 2"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["~status: draft"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["status: ~done"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["status: done & ~priority: > 4"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["status: done & ~priority: > 2"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: >= 1 & ~priority: > 2"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: >= 1 & ~priority: > 4"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["priority: >= 1 & priority: <= 4"], invert: false }), true);
+
+	// Complex parentheses grouping: (status: done, status: draft) & priority: = 3
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["(status: done, status: draft) & priority: = 3"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["（status: done，status: draft） & priority: = 3"], invert: false }), true); // Chinese parentheses and comma
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["(status: done, status: draft) & priority: > 5"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["(status: archived, status: draft) & priority: = 3"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["(status: archived, status: draft), priority: = 3"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["status: done & priority = 3 & rating > 4"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["status: done & priority = 3 & rating > 5"], invert: false }), false);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["~(priority > 5)"], invert: false }), true);
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["~(priority = 3)"], invert: false }), false);
+
+	// Invert flag combined with ~
+	assert.equal(matchesNoteFilter(numFile, numMetadata, { kind: "property", query: ["~priority: > 5"], invert: true }), false);
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["status", "owner", "missing"]), ["Ada", "draft"]);
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["up", "next", "#work"]), ["#work"]);
 	assert.deepEqual(getDisplayedPropertyValues(metadata, ["obsidian-note-status"]), ["📌"]);
