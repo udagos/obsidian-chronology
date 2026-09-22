@@ -289,6 +289,8 @@ export const Calendar = ({
                                 <option value="2w">最近二周</option>
                                 <option value="3w">最近三周</option>
                                 <option value="1m">最近一月</option>
+                                <option value="1w-stale">💤 近1周未改变</option>
+                                <option value="1m-stale">💤 近1月未改变</option>
                                 <option value="lastCheckIn" disabled={!hasLastCheckIn}>到上次打卡</option>
                                 <option value="all">全部历史</option>
                             </select>

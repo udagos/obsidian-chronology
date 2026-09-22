@@ -7,6 +7,7 @@ import { CalendarItem } from "src/CalendarType";
 import { ITimeIndex, MockTimeIndex, TimeIndex } from "src/TimeIndex";
 import { CalendarContainer } from "./CalendarContainer";
 import { myMoment } from "src/myMoment";
+import { getChronologySettings } from "src/main";
 export const CALENDAR_VIEW = "chronology-calendar-view";
 
 
@@ -24,13 +25,15 @@ export class CalendarView extends ItemView {
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
 
-        
-
         this.state = {
             date: new CalendarItem(myMoment())
         };
         this.icon = "clock";
-        this.timeIndex = new TimeIndex(this.app)
+        this.timeIndex = new TimeIndex(this.app);
+        const settings = getChronologySettings();
+        if (settings?.noteActivityHistory) {
+            this.timeIndex.loadActivityHistory(settings.noteActivityHistory);
+        }
     }
 
 

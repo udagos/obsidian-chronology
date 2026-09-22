@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { CalendarView, CALENDAR_VIEW } from './Views/CalendarView';
-import { App, Modal, Plugin } from 'obsidian';
+import { App, Modal, Plugin, TFile, moment } from 'obsidian';
 import { ChronologySettingTab } from 'src/ChronologySettingTab';
-import { DEFAULT_NOTE_FILTER_STATE, normalizeDisplayedProperties, normalizeFilterPresets, normalizeFilterState } from './noteFilterSettings';
+import { DEFAULT_NOTE_FILTER_STATE, hasAnyTrackedProperty, matchesPropertyChangeExpression, normalizeDisplayedProperties, normalizeFilterPresets, normalizeFilterState } from './noteFilterSettings';
 import type { FilterPreset, NoteFilterState } from './noteFilterSettings';
 import type { DateDisplayMode } from './timeIndexSettings';
 import { normalizeDateDisplayMode, normalizeExcludedFolders } from './timeIndexSettings';
@@ -28,6 +28,10 @@ export interface ChronologyPluginSettings {
     sortDesc: boolean;
     presets: FilterPreset[];
     activePresetId?: string | null;
+    noteActivityHistory?: Record<string, string[]>;
+    trackedPropertiesExpression?: string;
+    showActiveDaysChip?: boolean;
+    activeDaysWindowDays: number;
 }
 
 const DEFAULT_SETTINGS: ChronologyPluginSettings = {
@@ -50,6 +54,10 @@ const DEFAULT_SETTINGS: ChronologyPluginSettings = {
     sortDesc: true,
     presets: [],
     activePresetId: null,
+    noteActivityHistory: {},
+    trackedPropertiesExpression: "",
+    showActiveDaysChip: true,
+    activeDaysWindowDays: 7,
 }
 
 let expSettings: ChronologyPluginSettings;
@@ -74,6 +82,7 @@ export async function updateChronologySettings(partial: Partial<ChronologyPlugin
 export default class ChronologyPlugin extends Plugin {
     settings: ChronologyPluginSettings;
     ribbonIconEl: HTMLElement | null;
+    propertySnapshots: Map<string, Record<string, unknown>> = new Map();
 
     async onload() {
         expPlugin = this;
@@ -88,8 +97,8 @@ export default class ChronologyPlugin extends Plugin {
             this.addIcon();
         }
 
-        
         this.app.workspace.onLayoutReady(()=>{
+            this.initializePropertySnapshots();
             if(this.settings.launchOnStartup){
                 this.activateView();
             }
@@ -101,10 +110,68 @@ export default class ChronologyPlugin extends Plugin {
             callback: () => this.activateView(),
           });
 
-        
         this.addSettingTab(new ChronologySettingTab(this.app, this));
 
+        this.registerEvent(
+            this.app.vault.on("modify", (file) => {
+                if (file instanceof TFile && (file.extension === "md" || file.extension === "canvas")) {
+                    const expr = this.settings.trackedPropertiesExpression?.trim();
+                    let shouldRecord = true;
 
+                    if (expr) {
+                        const currentFm = (this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined) || {};
+                        const oldFm = this.propertySnapshots.get(file.path);
+                        const changedProps = new Set<string>();
+
+                        if (!hasAnyTrackedProperty(currentFm, expr)) {
+                            // Note does not contain any tracked properties
+                            shouldRecord = false;
+                        } else if (oldFm) {
+                            const allKeys = new Set([...Object.keys(oldFm), ...Object.keys(currentFm)]);
+                            for (const k of allKeys) {
+                                if (k === "position") continue;
+                                const oldVal = oldFm[k];
+                                const newVal = currentFm[k];
+                                if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+                                    changedProps.add(k.toLowerCase());
+                                }
+                            }
+                            shouldRecord = changedProps.size > 0 && matchesPropertyChangeExpression(expr, changedProps);
+                        } else {
+                            // First time seeing this file, save current snapshot as baseline without recording
+                            shouldRecord = false;
+                        }
+
+                        this.propertySnapshots.set(file.path, { ...currentFm });
+                    }
+
+                    if (shouldRecord) {
+                        const todayStr = moment().format("YYYY-MM-DD");
+                        if (!this.settings.noteActivityHistory) {
+                            this.settings.noteActivityHistory = {};
+                        }
+                        const list = this.settings.noteActivityHistory[file.path] || [];
+                        if (!list.includes(todayStr)) {
+                            list.push(todayStr);
+                            this.settings.noteActivityHistory[file.path] = list;
+                            void this.saveSettings();
+                        }
+                    }
+                }
+            })
+        );
+    }
+
+    private initializePropertySnapshots() {
+        const files = this.app.vault.getFiles();
+        for (const file of files) {
+            if (file.extension === "md" || file.extension === "canvas") {
+                const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+                if (fm) {
+                    this.propertySnapshots.set(file.path, { ...fm });
+                }
+            }
+        }
     }
 
     public addIcon() {

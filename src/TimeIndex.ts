@@ -2,7 +2,7 @@ import { getChronologySettings } from 'src/main';
 
 import { App, TFile, moment } from "obsidian";
 import { CalendarItem, CalendarItemType } from "./CalendarType";
-import { compareDisplayedPropertyItemLists, getDisplayedPropertyItems, matchesNoteFilter } from "./noteFilterSettings";
+import { compareDisplayedPropertyItemLists, getDisplayedPropertyItems, hasAnyTrackedProperty, matchesNoteFilter } from "./noteFilterSettings";
 import type { NoteFilterState } from "./noteFilterSettings";
 import type { DateDisplayMode } from "./timeIndexSettings";
 import { isPathExcluded, normalizeExcludedFolders } from "./timeIndexSettings";
@@ -31,6 +31,9 @@ export interface NoteAttributes {
     note: TFile;
     time: number;
     attribute: DateAttribute;
+    activeDays?: number;
+    staleDays?: number;
+    activeDaysWindow?: number;
 }
 
 
@@ -40,6 +43,7 @@ export class TimeIndex implements ITimeIndex {
 
     index?: Map<string, NoteAttributes[]>;
     indexSettingsKey?: string;
+    activityHistory: Map<string, Set<string>> = new Map();
 
     constructor(app: App) {
         this.app = app;
@@ -48,6 +52,84 @@ export class TimeIndex implements ITimeIndex {
     resetCache(){
         this.index = undefined;
         this.indexSettingsKey = undefined;
+    }
+
+    recordActivity(filePath: string, dateStr?: string) {
+        const d = dateStr || moment().format("YYYY-MM-DD");
+        let set = this.activityHistory.get(filePath);
+        if (!set) {
+            set = new Set();
+            this.activityHistory.set(filePath, set);
+        }
+        set.add(d);
+    }
+
+    loadActivityHistory(history: Record<string, string[]>) {
+        if (!history || typeof history !== "object") return;
+        for (const [path, dates] of Object.entries(history)) {
+            if (!Array.isArray(dates)) continue;
+            let set = this.activityHistory.get(path);
+            if (!set) {
+                set = new Set();
+                this.activityHistory.set(path, set);
+            }
+            for (const d of dates) {
+                if (typeof d === "string") set.add(d);
+            }
+        }
+    }
+
+    exportActivityHistory(): Record<string, string[]> {
+        const result: Record<string, string[]> = {};
+        for (const [path, set] of this.activityHistory.entries()) {
+            if (set.size > 0) {
+                result[path] = Array.from(set).sort();
+            }
+        }
+        return result;
+    }
+
+    getActivityDates(note: TFile, createdDate?: string, modifiedDate?: string, hasTrackedProps = true): Set<string> {
+        const settings = getChronologySettings();
+        const expr = settings?.trackedPropertiesExpression?.trim();
+
+        if (expr) {
+            // When tracked properties are configured:
+            // 1. If the note does not possess any tracked property, return empty set (0 active days)
+            if (!hasTrackedProps) {
+                return new Set();
+            }
+            // 2. Only return dates actually recorded in activityHistory (real tracked changes)
+            const set = this.activityHistory.get(note.path);
+            return set ? new Set(set) : new Set();
+        }
+
+        // When no tracked properties expression configured, fall back to file mtime / ctime
+        const set = this.activityHistory.get(note.path);
+        const result = set ? new Set(set) : new Set<string>();
+        if (createdDate) result.add(createdDate);
+        if (modifiedDate) result.add(modifiedDate);
+        return result;
+    }
+
+    countActiveDaysInPeriod(
+        note: TFile,
+        fromTime: moment.Moment,
+        toTime: moment.Moment,
+        createdDate: string,
+        modifiedDate: string,
+        hasTrackedProps = true
+    ): number {
+        const dates = this.getActivityDates(note, createdDate, modifiedDate, hasTrackedProps);
+        if (dates.size === 0) return 0;
+        let count = 0;
+        for (const dateStr of dates) {
+            const m = moment(dateStr, "YYYY-MM-DD");
+            if (m.isValid() && m.isSameOrAfter(fromTime, "day") && m.isSameOrBefore(toTime, "day")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     getNotesForCalendarItem(
@@ -65,6 +147,7 @@ export class TimeIndex implements ITimeIndex {
             !isPathExcluded(f.path, excludedFolders)
         );
         const { fromTime, toTime } = item.getTimeRange();
+        const safeToTime = toTime ?? fromTime;
         let rebuildCache = false;
         const indexSettingsKey = this.getIndexSettingsKey(sortingStrategy, excludedFolders);
         if (!this.index || this.indexSettingsKey !== indexSettingsKey) {
@@ -91,29 +174,55 @@ export class TimeIndex implements ITimeIndex {
             let modifiedTime = moment(note.stat.mtime);
             const creationStr = settings.creationDateAttribute;
             const modifiedStr = settings.modifiedDateAttribute;
+            const fileCache = this.app.metadataCache.getFileCache(note);
+            const frontmatter = fileCache?.frontmatter as Record<string, unknown> | undefined;
+            const hasTrackedProps = hasAnyTrackedProperty(frontmatter, settings.trackedPropertiesExpression);
+
             if(creationStr || modifiedStr ){
-                const md = app.metadataCache.getFileCache(note);
-                if(md?.frontmatter){
+                if(frontmatter){
                     if(creationStr){
-                        const ctime = md.frontmatter[creationStr];
+                        const ctime = frontmatter[creationStr];
                         if(ctime){
-                            createdTime = moment(ctime);
+                            createdTime = moment(ctime as any);
                         }
                     }
                     if(modifiedStr){
-                        const mtime = md.frontmatter[modifiedStr];
+                        const mtime = frontmatter[modifiedStr];
                         if(mtime){
-                            modifiedTime = moment(mtime);
+                            modifiedTime = moment(mtime as any);
                         }
                     }
                 }
             }
 
-            
-
             const isAll = item.type === CalendarItemType.All;
-            const matchCreated = isAll || createdTime.isBetween(fromTime, toTime);
-            const matchModified = isAll || modifiedTime.isBetween(fromTime, toTime);
+            const isStale = item.type === CalendarItemType.StaleRange || item.isStaleFilter === true;
+            const matchCreated = isAll || createdTime.isBetween(fromTime, safeToTime);
+            const matchModified = isAll || modifiedTime.isBetween(fromTime, safeToTime);
+            const createdDate = createdTime.format("YYYY-MM-DD");
+            const modifiedDate = modifiedTime.format("YYYY-MM-DD");
+
+            const customWindow = settings.activeDaysWindowDays;
+            let activeDaysFrom = fromTime;
+            let activeDaysTo = safeToTime;
+            let activeDaysWindow = 0;
+
+            if (customWindow && customWindow > 0) {
+                activeDaysTo = moment().endOf("day");
+                activeDaysFrom = moment().startOf("day").subtract(customWindow - 1, "days");
+                activeDaysWindow = customWindow;
+            } else if (!isAll) {
+                activeDaysWindow = Math.max(1, safeToTime.diff(fromTime, "days") + 1);
+            }
+
+            const activeDays = !hasTrackedProps
+                ? 0
+                : (isStale
+                    ? this.countActiveDaysInPeriod(note, fromTime, safeToTime, createdDate, modifiedDate, hasTrackedProps)
+                    : this.countActiveDaysInPeriod(note, activeDaysFrom, activeDaysTo, createdDate, modifiedDate, hasTrackedProps));
+
+            const staleDays = Math.max(0, moment().startOf("day").diff(modifiedTime.clone().startOf("day"), "days"));
+
             // use momentjs to find the time difference between createdTime and modifiedTime
             const timeDiffMs = moment.duration(modifiedTime.diff(createdTime)).asMilliseconds();
 
@@ -121,16 +230,29 @@ export class TimeIndex implements ITimeIndex {
             const ctime = createdTime.valueOf();
             const mtime = modifiedTime.valueOf();
 
-            const createdInfo = {
+            const createdInfo: NoteAttributes = {
                 note,
                 time: ctime,
-                attribute: DateAttribute.Created
+                attribute: DateAttribute.Created,
+                activeDays,
+                staleDays,
+                activeDaysWindow
             };
-            const modifiedInfo = {
+            const modifiedInfo: NoteAttributes = {
                 note,
                 time: mtime,
-                attribute: DateAttribute.Modified
+                attribute: DateAttribute.Modified,
+                activeDays,
+                staleDays,
+                activeDaysWindow
             };
+
+            if (isStale) {
+                if (activeDays === 0) {
+                    acc.push(modifiedInfo);
+                }
+                return acc;
+            }
 
             if(rebuildCache && this.index){
                 // stores the note in the cache with an entry 
@@ -252,9 +374,14 @@ export class TimeIndex implements ITimeIndex {
             return items;
         }
 
-        return items.filter((item) =>
-            matchesNoteFilter(item.note, this.app.metadataCache.getFileCache(item.note), filter)
-        );
+        return items.filter((item) => {
+            const fileWithContext = Object.assign(item.note, {
+                activeDays: item.activeDays,
+                staleDays: item.staleDays,
+                activeDaysWindow: item.activeDaysWindow
+            });
+            return matchesNoteFilter(fileWithContext, this.app.metadataCache.getFileCache(item.note), filter);
+        });
     }
 
     private getIndexSettingsKey(sortingStrategy: SortingStrategy, excludedFolders: readonly string[]): string {

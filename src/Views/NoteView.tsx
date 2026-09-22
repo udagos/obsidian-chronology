@@ -65,6 +65,25 @@ return (
         </span>
         <span className="chrono-note-meta">
             <span className={`chrono-note-chip chrono-note-chip-${item.attribute === DateAttribute.Created ? "created" : "modified"}`}>{dateLabel}</span>
+            {settings.showActiveDaysChip !== false && item.activeDays !== undefined && (
+                item.activeDays === 0 ? (
+                    <span
+                        className="chrono-note-chip chrono-note-chip-stale"
+                        title={`${item.activeDaysWindow ? `近 ${item.activeDaysWindow} 天内` : "当前时间范围内"}未变动${item.staleDays !== undefined ? `（距上次变动已停滞 ${item.staleDays} 天）` : ""}`}
+                        aria-label={`${item.activeDaysWindow ? `近${item.activeDaysWindow}天 ` : ""}0天变动${item.staleDays !== undefined ? `，停滞 ${item.staleDays} 天` : ""}`}
+                    >
+                        💤 {item.activeDaysWindow ? `近${item.activeDaysWindow}天 ` : ""}0天变动{item.staleDays !== undefined && item.staleDays > 0 ? ` (${item.staleDays}d)` : ""}
+                    </span>
+                ) : (
+                    <span
+                        className="chrono-note-chip chrono-note-chip-active-days"
+                        title={`${item.activeDaysWindow ? `近 ${item.activeDaysWindow} 天内` : "当前时间范围内"}变动了 ${item.activeDays} 天`}
+                        aria-label={`${item.activeDaysWindow ? `近${item.activeDaysWindow}天` : ""}变动 ${item.activeDays} 天`}
+                    >
+                        ⚡ {item.activeDaysWindow ? `近${item.activeDaysWindow}天` : ""}变动 {item.activeDays} 天
+                    </span>
+                )
+            )}
             {propertyItems.map(property => (
                 <span
                     className={`chrono-note-chip chrono-note-chip-${property.kind}`}

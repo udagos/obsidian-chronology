@@ -7,12 +7,15 @@ export enum CalendarItemType {
     Year,
     Range,
     All,
+    StaleRange,
 }
 
 export class CalendarItem {
     date: moment.Moment;
     type: CalendarItemType;
     toDate?: moment.Moment | undefined;
+    isStaleFilter?: boolean;
+    staleWindowDays?: number;
 
     /**
      *
@@ -20,13 +23,17 @@ export class CalendarItem {
     constructor(
         date: moment.Moment,
         type = CalendarItemType.Day,
-        toDate?: moment.Moment
+        toDate?: moment.Moment,
+        isStaleFilter = false,
+        staleWindowDays?: number
     ) {
         this.date = date.clone().startOf("day");
         this.type = type;
+        this.isStaleFilter = isStaleFilter;
+        this.staleWindowDays = staleWindowDays;
         this.toDate = toDate?.endOf("day");
         if (this.toDate) {
-            this.type = CalendarItemType.Range;
+            this.type = isStaleFilter ? CalendarItemType.StaleRange : CalendarItemType.Range;
             if(this.toDate.isBefore(this.date)) {
                 [this.date, this.toDate] = [this.toDate.startOf("day"), this.date.endOf("day")];
             } 
@@ -69,6 +76,7 @@ export class CalendarItem {
                 return this.getMomentTimeRange("day");
                 break;
             case CalendarItemType.Range:
+            case CalendarItemType.StaleRange:
                 return { fromTime: this.date, toTime: this.toDate };
                 break;
             default:

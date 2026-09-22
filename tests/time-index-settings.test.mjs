@@ -48,9 +48,12 @@ try {
 
 	const {
 		compareDisplayedPropertyItemLists,
+		extractTrackedPropertyNames,
 		getDisplayedPropertyItems,
 		getDisplayedPropertyValues,
+		hasAnyTrackedProperty,
 		matchesNoteFilter,
+		matchesPropertyChangeExpression,
 		normalizeDisplayedProperties,
 		normalizeFilterPresets,
 		normalizeFilterQuery,
@@ -367,6 +370,85 @@ try {
 				sortKey: "a",
 			},
 		]);
+
+		// Dynamic active_days and relative date tests
+		const now = Date.now();
+		const dayMs = 24 * 60 * 60 * 1000;
+
+		const staleFile = {
+			path: "stale-note.md",
+			stat: { mtime: now - 15 * dayMs, ctime: now - 30 * dayMs },
+			activeDays: 0,
+		};
+		const activeFile = {
+			path: "active-note.md",
+			stat: { mtime: now - 2 * dayMs, ctime: now - 20 * dayMs },
+			activeDays: 3,
+		};
+
+		const metaWithHistoryProps = {
+			frontmatter: {
+				"history edits": 10,
+				"history focused": "30 min",
+				stats_updated: new Date(now - 15 * dayMs).toISOString().slice(0, 10),
+			},
+		};
+
+		// 1. active_days tests
+		assert.equal(matchesNoteFilter(staleFile, metaWithHistoryProps, { kind: "property", query: ["active_days = 0"], invert: false }), true);
+		assert.equal(matchesNoteFilter(activeFile, metaWithHistoryProps, { kind: "property", query: ["active_days = 0"], invert: false }), false);
+		assert.equal(matchesNoteFilter(activeFile, metaWithHistoryProps, { kind: "property", query: ["active_days >= 2"], invert: false }), true);
+		assert.equal(matchesNoteFilter(staleFile, metaWithHistoryProps, { kind: "property", query: ["active_days >= 2"], invert: false }), false);
+
+		// 2. Combination with history properties
+		assert.equal(matchesNoteFilter(staleFile, metaWithHistoryProps, { kind: "property", query: ["(history edits) & (active_days = 0)"], invert: false }), true);
+		assert.equal(matchesNoteFilter(activeFile, metaWithHistoryProps, { kind: "property", query: ["(history edits) & (active_days = 0)"], invert: false }), false);
+
+		// 3. Relative date comparison with modified / mtime
+		assert.equal(matchesNoteFilter(staleFile, emptyMeta, { kind: "property", query: ["modified < 7d"], invert: false }), true);
+		assert.equal(matchesNoteFilter(activeFile, emptyMeta, { kind: "property", query: ["modified < 7d"], invert: false }), false);
+		assert.equal(matchesNoteFilter(staleFile, emptyMeta, { kind: "property", query: ["mtime < 1w"], invert: false }), true);
+		assert.equal(matchesNoteFilter(activeFile, emptyMeta, { kind: "property", query: ["mtime < 1w"], invert: false }), false);
+		assert.equal(matchesNoteFilter(activeFile, emptyMeta, { kind: "property", query: ["modified > 7d"], invert: false }), true);
+		assert.equal(matchesNoteFilter(staleFile, emptyMeta, { kind: "property", query: ["modified > 7d"], invert: false }), false);
+
+		// 4. Frontmatter date field relative comparison
+		assert.equal(matchesNoteFilter(staleFile, metaWithHistoryProps, { kind: "property", query: ["stats_updated < 7d"], invert: false }), true);
+		assert.equal(matchesNoteFilter(staleFile, metaWithHistoryProps, { kind: "property", query: ["stats_updated < 30d"], invert: false }), false);
+		assert.equal(matchesNoteFilter(staleFile, metaWithHistoryProps, { kind: "property", query: ["stats_updated < 1m"], invert: false }), false);
+
+		// 5. Property change expression evaluation tests (&, ,, |, ())
+		// Single property
+		assert.equal(matchesPropertyChangeExpression("history focused", new Set(["history focused"])), true);
+		assert.equal(matchesPropertyChangeExpression("history focused", new Set(["history edits"])), false);
+
+		// OR expression (comma and pipe)
+		assert.equal(matchesPropertyChangeExpression("history focused, history edits", new Set(["history focused"])), true);
+		assert.equal(matchesPropertyChangeExpression("history focused, history edits", new Set(["history edits"])), true);
+		assert.equal(matchesPropertyChangeExpression("history focused | history edits", new Set(["history edits"])), true);
+		assert.equal(matchesPropertyChangeExpression("history focused, history edits", new Set(["status"])), false);
+
+		// AND expression
+		assert.equal(matchesPropertyChangeExpression("history focused & history edits", new Set(["history focused"])), false);
+		assert.equal(matchesPropertyChangeExpression("history focused & history edits", new Set(["history edits"])), false);
+		assert.equal(matchesPropertyChangeExpression("history focused & history edits", new Set(["history focused", "history edits"])), true);
+
+		// Parentheses grouping
+		assert.equal(matchesPropertyChangeExpression("(history focused, history edits) & status", new Set(["history focused", "status"])), true);
+		assert.equal(matchesPropertyChangeExpression("(history focused, history edits) & status", new Set(["history edits", "status"])), true);
+		assert.equal(matchesPropertyChangeExpression("(history focused, history edits) & status", new Set(["history focused", "history edits"])), false);
+
+		// Empty expression (track all modifications)
+		assert.equal(matchesPropertyChangeExpression("", new Set(["anything"])), true);
+		assert.equal(matchesPropertyChangeExpression(undefined, new Set(["anything"])), true);
+
+		// 6. hasAnyTrackedProperty tests (ensure notes without tracked properties are not counted)
+		assert.equal(hasAnyTrackedProperty({ "history focused": "10 min" }, "history focused, history edits"), true);
+		assert.equal(hasAnyTrackedProperty({ "history edits": 5 }, "history focused, history edits"), true);
+		assert.equal(hasAnyTrackedProperty({ "words": 100, "status": "done" }, "history focused, history edits"), false);
+		assert.equal(hasAnyTrackedProperty(null, "history focused, history edits"), false);
+		assert.equal(hasAnyTrackedProperty(undefined, "history focused, history edits"), false);
+		assert.equal(hasAnyTrackedProperty({ "words": 100 }, ""), true); // empty expr matches all notes
 	} finally {
 		delete globalThis.window;
 	}

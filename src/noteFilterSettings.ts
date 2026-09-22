@@ -113,6 +113,12 @@ export interface MetadataLike {
 
 export interface FileLike {
     readonly path: string;
+    readonly stat?: {
+        readonly ctime?: number;
+        readonly mtime?: number;
+        readonly size?: number;
+    };
+    readonly activeDays?: number;
 }
 
 export type DisplayedPropertyKind = "property" | "tag";
@@ -332,8 +338,11 @@ export function tokenizeFilterQuery(query: string): Token[] {
             continue;
         }
 
-        if (ch === "," || ch === "，" || ch === "\n") {
+        if (ch === "," || ch === "，" || ch === "\n" || ch === "|") {
             flushAtom();
+            if (ch === "|" && i + 1 < len && query[i + 1] === "|") {
+                i++;
+            }
             tokens.push({ type: "OR", value: ch });
             i++;
             continue;
@@ -469,6 +478,75 @@ export function evaluateAst(node: FilterAstNode, evalAtom: (raw: string) => bool
     }
 }
 
+export function matchesPropertyChangeExpression(
+    expression: string | undefined | null,
+    changedProps: Set<string> | readonly string[]
+): boolean {
+    const trimmed = typeof expression === "string" ? expression.trim() : "";
+    if (!trimmed) {
+        return true;
+    }
+
+    const changedSet = changedProps instanceof Set
+        ? changedProps
+        : new Set(changedProps.map((p) => p.trim().toLowerCase()));
+
+    const ast = parseFilterQueries([trimmed]);
+    if (!ast) return true;
+
+    return evaluateAst(ast, (rawAtom) => {
+        let prop = rawAtom.trim();
+        let invert = false;
+        if (prop.startsWith("~")) {
+            invert = true;
+            prop = prop.slice(1).trim();
+        }
+        const colonIdx = prop.indexOf(":");
+        if (colonIdx >= 0) {
+            prop = prop.slice(0, colonIdx).trim();
+        }
+        const lower = prop.toLowerCase();
+        const matched = changedSet.has(lower);
+        return invert ? !matched : matched;
+    });
+}
+
+export function extractTrackedPropertyNames(expression: string | undefined | null): Set<string> {
+    const set = new Set<string>();
+    const trimmed = typeof expression === "string" ? expression.trim() : "";
+    if (!trimmed) return set;
+    const tokens = tokenizeFilterQuery(trimmed);
+    for (const t of tokens) {
+        if (t.type === "ATOM") {
+            let prop = t.value.trim();
+            if (prop.startsWith("~")) prop = prop.slice(1).trim();
+            const colonIdx = prop.indexOf(":");
+            if (colonIdx >= 0) prop = prop.slice(0, colonIdx).trim();
+            if (prop) set.add(prop.toLowerCase());
+        }
+    }
+    return set;
+}
+
+export function hasAnyTrackedProperty(
+    frontmatter: Record<string, unknown> | null | undefined,
+    expression: string | undefined | null
+): boolean {
+    const trimmed = typeof expression === "string" ? expression.trim() : "";
+    if (!trimmed) return true;
+    if (!frontmatter || typeof frontmatter !== "object") return false;
+    const trackedNames = extractTrackedPropertyNames(trimmed);
+    if (trackedNames.size === 0) return true;
+
+    const lowerFmKeys = new Set(Object.keys(frontmatter).map((k) => k.toLowerCase()));
+    for (const name of trackedNames) {
+        if (lowerFmKeys.has(name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function isQueryInverted(query: string): boolean {
     const trimmed = query.trim();
     return trimmed.startsWith("~") || trimmed.startsWith("#~");
@@ -539,12 +617,15 @@ export function matchesFolder(file: FileLike, queries: readonly string[]): boole
 export interface ParsedPropertyCondition {
     readonly propertyName: string;
     readonly invert: boolean;
-    readonly kind: "presence" | "numeric_comparison" | "numeric_range" | "text_comparison" | "text_include";
+    readonly kind: "presence" | "numeric_comparison" | "numeric_range" | "text_comparison" | "text_include" | "date_comparison";
     readonly operator?: string;
     readonly targetNumber?: number;
     readonly rangeMin?: number;
     readonly rangeMax?: number;
     readonly targetText?: string;
+    readonly targetTimestamp?: number;
+    readonly relativeDurationMs?: number;
+    readonly isRelativeDate?: boolean;
 }
 
 export function parseNumericValue(value: unknown): number | null {
@@ -566,6 +647,53 @@ export function parseNumericValue(value: unknown): number | null {
         }
     }
     return null;
+}
+
+export function parseDateToTimestamp(value: unknown): number | null {
+    if (value instanceof Date) {
+        const t = value.getTime();
+        return Number.isNaN(t) ? null : t;
+    }
+    if (typeof value === "number") {
+        if (Number.isNaN(value) || value <= 0) return null;
+        if (value < 1e11) {
+            return value * 1000;
+        }
+        return value;
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        if (/^\d{10,13}$/.test(trimmed)) {
+            const n = Number(trimmed);
+            if (!Number.isNaN(n)) {
+                return n < 1e11 ? n * 1000 : n;
+            }
+        }
+        const parsed = Date.parse(trimmed);
+        if (!Number.isNaN(parsed)) {
+            return parsed;
+        }
+    }
+    return null;
+}
+
+export function parseRelativeDurationMs(countStr: string, unitStr: string): number {
+    const count = parseFloat(countStr);
+    const unit = unitStr.toLowerCase();
+    if (unit.startsWith("h") || unit === "小时") {
+        return count * 60 * 60 * 1000;
+    }
+    if (unit.startsWith("w") || unit === "周") {
+        return count * 7 * 24 * 60 * 60 * 1000;
+    }
+    if (unit.startsWith("m") || unit === "月") {
+        return count * 30 * 24 * 60 * 60 * 1000;
+    }
+    if (unit.startsWith("y") || unit === "年") {
+        return count * 365 * 24 * 60 * 60 * 1000;
+    }
+    return count * 24 * 60 * 60 * 1000;
 }
 
 export function parsePropertyQuery(query: string): ParsedPropertyCondition | null {
@@ -607,7 +735,53 @@ export function parsePropertyQuery(query: string): ParsedPropertyCondition | nul
         return { propertyName, invert, kind: "presence" };
     }
 
-    // 1. Numeric range: min..max or min~max
+    // 1. Relative duration comparison with operator: e.g. < 7d, <= 1w, < 1m, >= 30d, > 3天
+    const relDateCompMatch = valExpr.match(/^(>=|<=|!=|<>|==|=|>|<)\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*(d|day|days|w|week|weeks|m|month|months|y|year|years|h|hour|hours|天|周|月|年|小时)$/i);
+    if (relDateCompMatch) {
+        const operator = relDateCompMatch[1];
+        const ms = parseRelativeDurationMs(relDateCompMatch[2], relDateCompMatch[3]);
+        return {
+            propertyName,
+            invert,
+            kind: "date_comparison",
+            operator,
+            isRelativeDate: true,
+            relativeDurationMs: ms
+        };
+    }
+
+    // 2. Absolute date comparison with operator: e.g. >= 2026-09-01, < 2026-08-15
+    const absDateCompMatch = valExpr.match(/^(>=|<=|!=|<>|==|=|>|<)\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T ]\d{1,2}:\d{1,2}(?::\d{1,2})?)?)$/);
+    if (absDateCompMatch) {
+        const operator = absDateCompMatch[1];
+        const parsed = Date.parse(absDateCompMatch[2]);
+        if (!Number.isNaN(parsed)) {
+            return {
+                propertyName,
+                invert,
+                kind: "date_comparison",
+                operator,
+                targetTimestamp: parsed,
+                isRelativeDate: false
+            };
+        }
+    }
+
+    // 3. Bare relative duration: e.g. 7d, 1w, 30d, 1m (treat as <= 7d)
+    const bareRelDateMatch = valExpr.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*(d|day|days|w|week|weeks|m|month|months|y|year|years|h|hour|hours|天|周|月|年|小时)$/i);
+    if (bareRelDateMatch) {
+        const ms = parseRelativeDurationMs(bareRelDateMatch[1], bareRelDateMatch[2]);
+        return {
+            propertyName,
+            invert,
+            kind: "date_comparison",
+            operator: "<=",
+            isRelativeDate: true,
+            relativeDurationMs: ms
+        };
+    }
+
+    // 4. Numeric range: min..max or min~max
     const rangeMatch = valExpr.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*(?:\.\.|~)\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
     if (rangeMatch) {
         const min = parseFloat(rangeMatch[1]);
@@ -621,7 +795,7 @@ export function parsePropertyQuery(query: string): ParsedPropertyCondition | nul
         };
     }
 
-    // 2. Numeric comparison with operator: >=, <=, !=, <>, ==, =, >, <
+    // 5. Numeric comparison with operator: >=, <=, !=, <>, ==, =, >, <
     const numCompMatch = valExpr.match(/^(>=|<=|!=|<>|==|=|>|<)\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
     if (numCompMatch) {
         const operator = numCompMatch[1];
@@ -830,13 +1004,66 @@ function matchesSinglePropertyCondition(
         }
     }
 
+    const lowerName = condition.propertyName.toLowerCase();
+    if (!hasProp) {
+        if (lowerName === "active_days" || lowerName === "changed_days" || lowerName === "activedays") {
+            hasProp = true;
+            actualValue = file?.activeDays ?? 0;
+        } else if ((lowerName === "mtime" || lowerName === "modified" || lowerName === "file.mtime") && file?.stat?.mtime) {
+            hasProp = true;
+            actualValue = file.stat.mtime;
+        } else if ((lowerName === "ctime" || lowerName === "created" || lowerName === "file.ctime") && file?.stat?.ctime) {
+            hasProp = true;
+            actualValue = file.stat.ctime;
+        }
+    }
+
     if (!hasProp) {
         return false;
     }
 
     switch (condition.kind) {
         case "presence":
+            if (lowerName === "active_days" || lowerName === "changed_days" || lowerName === "activedays") {
+                return actualValue !== undefined && actualValue !== null && actualValue !== "" && actualValue !== 0;
+            }
             return actualValue !== undefined && actualValue !== null && actualValue !== "";
+
+        case "date_comparison": {
+            const op = condition.operator!;
+            let actualTs: number | null = null;
+            if (actualValue !== undefined && actualValue !== null) {
+                if (Array.isArray(actualValue)) {
+                    return actualValue.some((item) => {
+                        const ts = parseDateToTimestamp(item);
+                        if (ts === null) return false;
+                        const targetTs = condition.isRelativeDate
+                            ? Date.now() - condition.relativeDurationMs!
+                            : condition.targetTimestamp!;
+                        return compareNumbers(ts, op, targetTs);
+                    });
+                }
+                actualTs = parseDateToTimestamp(actualValue);
+            }
+
+            if (actualTs === null) {
+                if ((lowerName === "mtime" || lowerName === "modified" || lowerName === "file.mtime") && file?.stat?.mtime) {
+                    actualTs = file.stat.mtime;
+                } else if ((lowerName === "ctime" || lowerName === "created" || lowerName === "file.ctime") && file?.stat?.ctime) {
+                    actualTs = file.stat.ctime;
+                }
+            }
+
+            if (actualTs === null) {
+                return false;
+            }
+
+            const targetTs = condition.isRelativeDate
+                ? Date.now() - condition.relativeDurationMs!
+                : condition.targetTimestamp!;
+
+            return compareNumbers(actualTs, op, targetTs);
+        }
 
         case "numeric_range": {
             const min = condition.rangeMin!;

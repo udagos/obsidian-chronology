@@ -85,7 +85,7 @@ export const CalendarContainer = ({date, onOpen}:CalendarContainerProps) => {
 		[setDate],
 	)
 
-    const useList = settings.useSimpleList || current.type == CalendarItemType.Month || current.type == CalendarItemType.Year || current.type == CalendarItemType.All || current.type == CalendarItemType.Range;
+    const useList = settings.useSimpleList || current.type == CalendarItemType.Month || current.type == CalendarItemType.Year || current.type == CalendarItemType.All || current.type == CalendarItemType.Range || current.type == CalendarItemType.StaleRange;
 
     const handleOpen = useCallback((note:TFile, paneType: PaneType | boolean)=>{
         onOpen(note, paneType);
@@ -382,6 +382,12 @@ export const CalendarContainer = ({date, onOpen}:CalendarContainerProps) => {
                 break;
             case "1m":
                 setDate(new CalendarItem(today.clone().subtract(29, "days"), CalendarItemType.Range, today.clone()));
+                break;
+            case "1w-stale":
+                setDate(new CalendarItem(today.clone().subtract(6, "days"), CalendarItemType.StaleRange, today.clone(), true, 7));
+                break;
+            case "1m-stale":
+                setDate(new CalendarItem(today.clone().subtract(29, "days"), CalendarItemType.StaleRange, today.clone(), true, 30));
                 break;
             case "lastCheckIn":
                 if (activePreset && activePreset.checkIns && activePreset.checkIns.length > 0) {
