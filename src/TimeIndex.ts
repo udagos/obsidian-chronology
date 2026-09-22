@@ -111,8 +111,9 @@ export class TimeIndex implements ITimeIndex {
 
             
 
-            const matchCreated = createdTime.isBetween(fromTime, toTime);
-            const matchModified = modifiedTime.isBetween(fromTime, toTime);
+            const isAll = item.type === CalendarItemType.All;
+            const matchCreated = isAll || createdTime.isBetween(fromTime, toTime);
+            const matchModified = isAll || modifiedTime.isBetween(fromTime, toTime);
             // use momentjs to find the time difference between createdTime and modifiedTime
             const timeDiffMs = moment.duration(modifiedTime.diff(createdTime)).asMilliseconds();
 

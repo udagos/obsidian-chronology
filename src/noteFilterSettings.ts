@@ -4,6 +4,35 @@ import type { DateDisplayMode } from "./timeIndexSettings";
 
 export type NoteFilterKind = "all" | "tag" | "property" | "folder";
 
+export const PRESET_PALETTE: readonly string[] = [
+    "#4A90E2", // Blue
+    "#E06C75", // Red / Coral
+    "#98C379", // Green
+    "#E5C07B", // Yellow / Amber
+    "#C678DD", // Purple
+    "#56B6C2", // Cyan / Teal
+    "#D19A66", // Orange
+    "#BE5046", // Dark Red
+    "#61AFEF", // Light Blue
+    "#9B59B6", // Amethyst
+    "#1ABC9C", // Turquoise
+    "#E67E22", // Carrot Orange
+    "#2ECC71", // Emerald
+    "#F39C12", // Sun Yellow
+    "#E91E63", // Pink
+    "#00BCD4", // Bright Cyan
+];
+
+export function getNextPresetColor(existingPresets: readonly { color?: string }[]): string {
+    const usedColors = new Set(existingPresets.map(p => p.color?.toLowerCase()).filter(Boolean));
+    for (const color of PRESET_PALETTE) {
+        if (!usedColors.has(color.toLowerCase())) {
+            return color;
+        }
+    }
+    return PRESET_PALETTE[Math.floor(Math.random() * PRESET_PALETTE.length)];
+}
+
 export interface FilterPreset {
     readonly id: string;
     readonly name: string;
@@ -13,6 +42,10 @@ export interface FilterPreset {
     readonly filterInvert: boolean;
     readonly sortByTime: boolean;
     readonly sortDesc: boolean;
+    readonly color: string;
+    readonly checkIns: readonly string[];
+    readonly missingPropertyToTodo?: string;
+    readonly todoPropertyName?: string;
 }
 
 export function normalizeFilterPresets(presets: unknown): FilterPreset[] {
@@ -30,6 +63,19 @@ export function normalizeFilterPresets(presets: unknown): FilterPreset[] {
         const filterInvert = item.filterInvert === true;
         const sortByTime = item.sortByTime === true;
         const sortDesc = item.sortDesc !== false;
+        const color = typeof (item as any).color === "string" && (item as any).color.trim()
+            ? (item as any).color.trim()
+            : getNextPresetColor(result);
+        const rawCheckIns = Array.isArray((item as any).checkIns) ? (item as any).checkIns : [];
+        const checkIns = (rawCheckIns as unknown[])
+            .filter((d): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d))
+            .sort();
+        const missingPropertyToTodo = typeof (item as any).missingPropertyToTodo === "string" && (item as any).missingPropertyToTodo.trim()
+            ? (item as any).missingPropertyToTodo.trim()
+            : undefined;
+        const todoPropertyName = typeof (item as any).todoPropertyName === "string" && (item as any).todoPropertyName.trim()
+            ? (item as any).todoPropertyName.trim()
+            : undefined;
         result.push({
             id,
             name,
@@ -38,7 +84,11 @@ export function normalizeFilterPresets(presets: unknown): FilterPreset[] {
             filterQuery,
             filterInvert,
             sortByTime,
-            sortDesc
+            sortDesc,
+            color,
+            checkIns,
+            missingPropertyToTodo,
+            todoPropertyName
         });
     }
     return result;
@@ -147,7 +197,7 @@ export function normalizeFilterQuery(values: readonly string[] | string | undefi
 }
 
 export function matchesNoteFilter(file: FileLike, metadata: MetadataLike | null | undefined, filter: NoteFilterState): boolean {
-    if (filter.kind === "all" || filter.query.length === 0) {
+    if (filter.query.length === 0) {
         return true;
     }
 
@@ -223,18 +273,9 @@ export function getFolderPath(file: TFile): string {
 }
 
 function matchesFilterQuery(file: FileLike, metadata: MetadataLike | null | undefined, filter: NoteFilterState): boolean {
-    switch (filter.kind) {
-        case "tag":
-            return matchesTag(metadata, filter.query);
-        case "property":
-            return matchesProperty(metadata, filter.query, file);
-        case "folder":
-            return matchesFolder(file, filter.query);
-        case "all":
-            return true;
-        default:
-            return true;
-    }
+    const ast = parseFilterQueries(filter.query);
+    if (!ast) return true;
+    return evaluateAst(ast, (raw) => evalMixedAtom(file, metadata, raw, filter.kind));
 }
 
 export type FilterAstNode =
@@ -448,7 +489,11 @@ function evalTagAtom(metadata: MetadataLike | null | undefined, raw: string): bo
     const trimmed = raw.trim();
     if (!trimmed) return true;
     const isInverted = isQueryInverted(trimmed);
-    const tag = normalizeTag(stripQueryInversion(trimmed));
+    let tag = stripQueryInversion(trimmed);
+    if (tag.startsWith("#") || tag.startsWith("＃")) {
+        tag = tag.slice(1).trim();
+    }
+    tag = normalizeTag(tag);
     if (!tag) return true;
 
     const tags = new Set<string>();
@@ -456,7 +501,7 @@ function evalTagAtom(metadata: MetadataLike | null | undefined, raw: string): bo
     const frontmatterTags = metadata?.frontmatter?.tags;
     readFrontmatterTags(frontmatterTags).forEach((t) => tags.add(normalizeTag(t)));
 
-    const matched = tags.has(tag);
+    const matched = tags.has(tag) || Array.from(tags).some((t) => t.startsWith(`${tag}/`));
     return isInverted ? !matched : matched;
 }
 
@@ -467,17 +512,22 @@ export function matchesTag(metadata: MetadataLike | null | undefined, queries: r
 }
 
 function evalFolderAtom(file: FileLike, raw: string): boolean {
-    const trimmed = raw.trim();
+    let trimmed = raw.trim();
     if (!trimmed) return true;
     let inverted = false;
-    let path = trimmed;
-    if (path.startsWith("~")) {
+    if (trimmed.startsWith("~")) {
         inverted = true;
-        path = path.slice(1).trim();
+        trimmed = trimmed.slice(1).trim();
     }
-    const folders = normalizeExcludedFolders([path]);
-    const matched = isPathExcluded(file.path, folders);
-    return inverted ? !matched : matched;
+    if (trimmed.startsWith("@") || trimmed.startsWith("＠")) {
+        trimmed = trimmed.slice(1).trim();
+    }
+    if (!trimmed) return true;
+    const folders = normalizeExcludedFolders([trimmed]);
+    const normalizedFilePath = file.path.replace(/\\/g, "/").replace(/^\/+/, "");
+    const inFolder = isPathExcluded(file.path, folders) ||
+        normalizedFilePath.split("/").slice(0, -1).some((seg) => seg.toLowerCase() === trimmed.toLowerCase());
+    return inverted ? !inFolder : inFolder;
 }
 
 export function matchesFolder(file: FileLike, queries: readonly string[]): boolean {
@@ -858,6 +908,40 @@ function evalPropertyAtom(metadata: MetadataLike | null | undefined, raw: string
     const frontmatter = metadata?.frontmatter;
     const matched = matchesSinglePropertyCondition(frontmatter, cond, file);
     return cond.invert ? !matched : matched;
+}
+
+export function evalMixedAtom(
+    file: FileLike,
+    metadata: MetadataLike | null | undefined,
+    raw: string,
+    defaultKind: NoteFilterKind
+): boolean {
+    let trimmed = raw.trim();
+    if (!trimmed) return true;
+
+    let invert = false;
+    if (trimmed.startsWith("~")) {
+        invert = true;
+        trimmed = trimmed.slice(1).trim();
+    }
+
+    let matched = false;
+    if (trimmed.startsWith("#") || trimmed.startsWith("＃")) {
+        matched = evalTagAtom(metadata, trimmed);
+    } else if (trimmed.startsWith("@") || trimmed.startsWith("＠")) {
+        matched = evalFolderAtom(file, trimmed);
+    } else {
+        const isPropertyComparison = /[:><=!]/.test(trimmed);
+        if (defaultKind === "folder" && !isPropertyComparison) {
+            matched = evalFolderAtom(file, trimmed);
+        } else if (defaultKind === "tag" && !isPropertyComparison) {
+            matched = evalTagAtom(metadata, trimmed);
+        } else {
+            matched = evalPropertyAtom(metadata, trimmed, file);
+        }
+    }
+
+    return invert ? !matched : matched;
 }
 
 export function matchesProperty(metadata: MetadataLike | null | undefined, queries: readonly string[], file?: FileLike | null): boolean {

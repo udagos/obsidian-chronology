@@ -6,6 +6,7 @@ export enum CalendarItemType {
     Month,
     Year,
     Range,
+    All,
 }
 
 export class CalendarItem {
@@ -43,6 +44,9 @@ export class CalendarItem {
     }
 
     isInRange(date: moment.Moment) {
+        if (this.type === CalendarItemType.All) {
+            return true;
+        }
         const { fromTime, toTime } = this.getTimeRange();
         const inRange = fromTime.isSameOrBefore(date) && toTime?.isSameOrAfter(date);
         return inRange;
@@ -50,6 +54,8 @@ export class CalendarItem {
 
     getTimeRange() {
         switch (this.type) {
+            case CalendarItemType.All:
+                return { fromTime: moment(0), toTime: moment("9999-12-31") };
             case CalendarItemType.Year:
                 return this.getMomentTimeRange("year");
                 break;

@@ -93,6 +93,26 @@ try {
 	assert.equal(normalizedPresets[1].filterQuery, "");
 	assert.equal(normalizedPresets[1].filterInvert, false);
 	assert.equal(normalizedPresets[1].sortDesc, false);
+	assert.ok(typeof normalizedPresets[0].color === "string" && normalizedPresets[0].color.startsWith("#"));
+	assert.ok(typeof normalizedPresets[1].color === "string" && normalizedPresets[1].color.startsWith("#"));
+	assert.deepEqual(normalizedPresets[0].checkIns, []);
+	assert.deepEqual(normalizedPresets[1].checkIns, []);
+
+	const checkInPresets = normalizeFilterPresets([
+		{
+			id: "checkin-1",
+			name: "Habit Preset",
+			color: "#E06C75",
+			checkIns: ["2026-09-20", "2026-09-10", "invalid-date"],
+			missingPropertyToTodo: "status",
+			todoPropertyName: "todo"
+		}
+	]);
+	assert.equal(checkInPresets[0].color, "#E06C75");
+	assert.deepEqual(checkInPresets[0].checkIns, ["2026-09-10", "2026-09-20"]);
+	assert.equal(checkInPresets[0].missingPropertyToTodo, "status");
+	assert.equal(checkInPresets[0].todoPropertyName, "todo");
+
 	assert.deepEqual(normalizeFilterPresets(null), []);
 
 	const file = { path: "Projects/Client/a.md" };
@@ -143,6 +163,25 @@ try {
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["~Archive"], invert: false }), true);
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["(Projects, Archive) & ~Projects/Client"], invert: false }), false);
 	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["(Projects, Archive) & ~Projects/Old"], invert: false }), true);
+
+	// Tests for mixed filter syntax (#tag, @folder, and property)
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["#Work"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["#Nonexistent"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["@Projects/Client"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["@Client"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["@OtherFolder"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["status:draft"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["status:done"], invert: false }), false);
+
+	// Combined mixed queries
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["@Client & #Work & status:draft"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["@Client & #Work & status:done"], invert: false }), false);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["@Client, #Nonexistent"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "all", query: ["~@OtherFolder & ~#Nonexistent & status:draft"], invert: false }), true);
+
+	// Mixed writing in folder mode
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["@Client & #Work"], invert: false }), true);
+	assert.equal(matchesNoteFilter(file, metadata, { kind: "folder", query: ["Client & #Work & status:draft"], invert: false }), true);
 
 	// Tests for numeric comparison and ~ negation in property filter
 	const numFile = { path: "Notes/task.md" };

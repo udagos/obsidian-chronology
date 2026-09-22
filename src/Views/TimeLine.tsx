@@ -82,6 +82,7 @@ function getClusteringStrategy() {
             },
             [CalendarItemType.Month]: undefined,
             [CalendarItemType.Year]: undefined,
+            [CalendarItemType.All]: undefined,
         }
     
     return clusteringStrategies;
@@ -96,7 +97,7 @@ export const TimeLine = ({ calItem, items, onOpen }:
         onOpen: (note: TFile, paneType: PaneType | boolean) => void
     }) => {
 
-    if(calItem.type == CalendarItemType.Range) return (<div></div>);    
+    if(calItem.type == CalendarItemType.Range || calItem.type == CalendarItemType.All) return (<div></div>);    
     
     const clusterStrat = getClusteringStrategy()[calItem.type];
     if(!clusterStrat){
