@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { CalendarView, CALENDAR_VIEW } from './Views/CalendarView';
-import { App, Modal, Plugin, TFile, moment } from 'obsidian';
+import { App, Modal, Notice, Plugin, TFile, moment } from 'obsidian';
 import { ChronologySettingTab } from 'src/ChronologySettingTab';
 import { DEFAULT_NOTE_FILTER_STATE, hasAnyTrackedProperty, matchesPropertyChangeExpression, normalizeDisplayedProperties, normalizeFilterPresets, normalizeFilterState } from './noteFilterSettings';
 import type { FilterPreset, NoteFilterState } from './noteFilterSettings';
 import type { DateDisplayMode } from './timeIndexSettings';
 import { normalizeDateDisplayMode, normalizeExcludedFolders } from './timeIndexSettings';
+import { updateNoteFrontmatterProperty } from './utils';
 
 
 export interface ChronologyPluginSettings {
@@ -32,6 +33,8 @@ export interface ChronologyPluginSettings {
     trackedPropertiesExpression?: string;
     showActiveDaysChip?: boolean;
     activeDaysWindowDays: number;
+    syncActiveDaysToFrontmatter: boolean;
+    activeDaysPropertyName: string;
 }
 
 const DEFAULT_SETTINGS: ChronologyPluginSettings = {
@@ -58,6 +61,8 @@ const DEFAULT_SETTINGS: ChronologyPluginSettings = {
     trackedPropertiesExpression: "",
     showActiveDaysChip: true,
     activeDaysWindowDays: 7,
+    syncActiveDaysToFrontmatter: true,
+    activeDaysPropertyName: "active_days",
 }
 
 let expSettings: ChronologyPluginSettings;
@@ -110,6 +115,12 @@ export default class ChronologyPlugin extends Plugin {
             callback: () => this.activateView(),
           });
 
+        this.addCommand({
+            id: "sync-all-notes-active-days",
+            name: "同步所有笔记的变动天数到属性 (Sync Active Days to Frontmatter)",
+            callback: () => this.updateAllNotesActiveDaysProperty(true),
+        });
+
         this.addSettingTab(new ChronologySettingTab(this.app, this));
 
         this.registerEvent(
@@ -156,10 +167,90 @@ export default class ChronologyPlugin extends Plugin {
                             this.settings.noteActivityHistory[file.path] = list;
                             void this.saveSettings();
                         }
+
+                        if (this.settings.syncActiveDaysToFrontmatter) {
+                            const propName = (this.settings.activeDaysPropertyName || "active_days").trim();
+                            if (propName) {
+                                const customWindow = this.settings.activeDaysWindowDays > 0 ? this.settings.activeDaysWindowDays : 7;
+                                const toTime = moment().endOf("day");
+                                const fromTime = moment().startOf("day").subtract(customWindow - 1, "days");
+                                let activeDays = 0;
+                                for (const d of list) {
+                                    const m = moment(d, "YYYY-MM-DD");
+                                    if (m.isValid() && m.isSameOrAfter(fromTime, "day") && m.isSameOrBefore(toTime, "day")) {
+                                        activeDays++;
+                                    }
+                                }
+                                void updateNoteFrontmatterProperty(this.app, file, propName, activeDays);
+                            }
+                        }
                     }
                 }
             })
         );
+    }
+
+    async updateAllNotesActiveDaysProperty(showNotice = false): Promise<number> {
+        if (!this.settings.syncActiveDaysToFrontmatter) {
+            if (showNotice) {
+                new Notice("未开启【同步写入变动天数到笔记属性】设置");
+            }
+            return 0;
+        }
+
+        const propName = (this.settings.activeDaysPropertyName || "active_days").trim();
+        if (!propName) return 0;
+
+        const expr = this.settings.trackedPropertiesExpression?.trim();
+        const files = this.app.vault.getFiles().filter(f => f.extension === "md" || f.extension === "canvas");
+
+        const customWindow = this.settings.activeDaysWindowDays > 0 ? this.settings.activeDaysWindowDays : 7;
+        const toTime = moment().endOf("day");
+        const fromTime = moment().startOf("day").subtract(customWindow - 1, "days");
+
+        let updatedCount = 0;
+
+        for (const file of files) {
+            const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+            const hasTracked = hasAnyTrackedProperty(fm, expr);
+
+            let activeDays = 0;
+            if (hasTracked) {
+                const dates = this.settings.noteActivityHistory?.[file.path];
+                if (Array.isArray(dates)) {
+                    for (const d of dates) {
+                        const m = moment(d, "YYYY-MM-DD");
+                        if (m.isValid() && m.isSameOrAfter(fromTime, "day") && m.isSameOrBefore(toTime, "day")) {
+                            activeDays++;
+                        }
+                    }
+                }
+            } else if (fm && !(propName in fm)) {
+                // Note lacks tracked properties and doesn't have active_days, skip
+                continue;
+            }
+
+            const currentVal = fm?.[propName];
+            if (currentVal === activeDays) {
+                continue;
+            }
+
+            try {
+                await updateNoteFrontmatterProperty(this.app, file, propName, activeDays);
+                const snap = this.propertySnapshots.get(file.path) || {};
+                snap[propName] = activeDays;
+                this.propertySnapshots.set(file.path, snap);
+                updatedCount++;
+            } catch (err) {
+                console.error(`Failed to update ${propName} for ${file.path}`, err);
+            }
+        }
+
+        if (showNotice) {
+            new Notice(`已完成变动天数同步：更新了 ${updatedCount} 篇笔记中的 "${propName}" 属性（窗口: ${customWindow}天）`);
+        }
+
+        return updatedCount;
     }
 
     private initializePropertySnapshots() {

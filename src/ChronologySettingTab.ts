@@ -172,15 +172,57 @@ export class ChronologySettingTab extends PluginSettingTab {
 
         new Setting(this.containerEl)
             .setName("变动天数统计窗口（天数）")
-            .setDesc("设置计算笔记变动天数的时间跨度（如最近 7 天、30 天等）。输入数字（如 7 或 30）；设为 0 则自动跟随日历当前选中的日期范围。")
+            .setDesc("设置计算笔记变动天数的时间跨度（如最近 7 天、30 天等）。输入数字（如 7 或 30）；设为 0 则自动跟随日历当前选中的日期范围。修改后若已开启同步属性，将自动批量更新笔记。")
             .addText(cb => {
                 cb
                 .setPlaceholder("默认: 7")
                 .setValue(this.plugin.settings.activeDaysWindowDays !== undefined ? this.plugin.settings.activeDaysWindowDays.toString() : "7")
                 .onChange(async (value) => {
                     const parsed = parseInt(value.trim());
-                    this.plugin.settings.activeDaysWindowDays = Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+                    const oldVal = this.plugin.settings.activeDaysWindowDays;
+                    const newVal = Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+                    this.plugin.settings.activeDaysWindowDays = newVal;
                     await this.plugin.saveSettings();
+                    if (oldVal !== newVal && this.plugin.settings.syncActiveDaysToFrontmatter) {
+                        void this.plugin.updateAllNotesActiveDaysProperty(true);
+                    }
+                });
+            });
+
+        this.createToggle(containerEl, "同步写入变动天数到笔记属性",
+            "开启后，笔记发生变动或修改天数窗口时，自动将计算出的变动天数（如 active_days: 3）写入到文档顶部的 Frontmatter 属性中",
+            "syncActiveDaysToFrontmatter"
+        );
+
+        new Setting(this.containerEl)
+            .setName("变动天数属性名称")
+            .setDesc("写入笔记 Frontmatter 的属性键名称（默认为 active_days）")
+            .addText(cb => {
+                cb
+                .setPlaceholder("默认: active_days")
+                .setValue(this.plugin.settings.activeDaysPropertyName || "active_days")
+                .onChange(async (value) => {
+                    this.plugin.settings.activeDaysPropertyName = value.trim() || "active_days";
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        new Setting(this.containerEl)
+            .setName("立即同步所有笔记属性")
+            .setDesc("手动触发全库扫描，按当前天数窗口计算并将变动天数批量更新写入到所有相关笔记属性中")
+            .addButton(btn => {
+                btn
+                .setButtonText("立即同步")
+                .setCta()
+                .onClick(async () => {
+                    btn.setDisabled(true);
+                    btn.setButtonText("同步中...");
+                    try {
+                        await this.plugin.updateAllNotesActiveDaysProperty(true);
+                    } finally {
+                        btn.setDisabled(false);
+                        btn.setButtonText("立即同步");
+                    }
                 });
             });
 

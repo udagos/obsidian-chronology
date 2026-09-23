@@ -5,7 +5,7 @@ export async function updateNoteFrontmatterProperty(
     app: App,
     file: TFile,
     propertyKey: string,
-    propertyValue: string
+    propertyValue: unknown
 ): Promise<void> {
     const fileManager = app.fileManager as unknown as {
         processFrontMatter?: (file: TFile, fn: (frontmatter: Record<string, unknown>) => void) => Promise<void>;
@@ -16,6 +16,10 @@ export async function updateNoteFrontmatterProperty(
         });
         return;
     }
+
+    const formattedValue = typeof propertyValue === "number" || typeof propertyValue === "boolean"
+        ? String(propertyValue)
+        : `"${String(propertyValue)}"`;
 
     const content = await app.vault.read(file);
     const frontmatterRegex = /^---\r?\n([\s\S]*?)\r?\n---/;
@@ -29,17 +33,17 @@ export async function updateNoteFrontmatterProperty(
             const propMatch = line.match(/^([a-zA-Z0-9_-]+)\s*:/);
             if (propMatch && propMatch[1] === propertyKey) {
                 keyFound = true;
-                return `${propertyKey}: "${propertyValue}"`;
+                return `${propertyKey}: ${formattedValue}`;
             }
             return line;
         });
         if (!keyFound) {
-            newYamlLines.push(`${propertyKey}: "${propertyValue}"`);
+            newYamlLines.push(`${propertyKey}: ${formattedValue}`);
         }
         const newContent = `---\n${newYamlLines.join("\n")}\n---${body}`;
         await app.vault.modify(file, newContent);
     } else {
-        const newContent = `---\n${propertyKey}: "${propertyValue}"\n---\n${content}`;
+        const newContent = `---\n${propertyKey}: ${formattedValue}\n---\n${content}`;
         await app.vault.modify(file, newContent);
     }
 }
