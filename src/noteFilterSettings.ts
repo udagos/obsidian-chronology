@@ -1442,3 +1442,77 @@ export function normalizeFilterKind(kind: unknown): NoteFilterKind {
             return "all";
     }
 }
+
+export interface DaysRange {
+    readonly minDays: number;
+    readonly maxDays: number;
+}
+
+export function parseDaysRange(expr: string | null | undefined): DaysRange | null {
+    if (!expr) return null;
+    const trimmed = expr.trim();
+    if (!trimmed) return null;
+
+    // Matches single number e.g. "30" or range with delimiters -, ~, .., or spaces e.g. "0-30", "7~30", "7..30", "0 30"
+    const match = trimmed.match(/^(\d+)(?:\s*(?:[-~]|\.\.|\s)\s*(\d+))?$/);
+    if (!match) return null;
+
+    const num1 = parseInt(match[1], 10);
+    if (isNaN(num1) || num1 < 0) return null;
+
+    if (match[2] === undefined) {
+        // Single number N -> [0, N]
+        return { minDays: 0, maxDays: num1 };
+    }
+
+    const num2 = parseInt(match[2], 10);
+    if (isNaN(num2) || num2 < 0) return null;
+
+    return {
+        minDays: Math.min(num1, num2),
+        maxDays: Math.max(num1, num2)
+    };
+}
+
+export function isNoteCreatedInRange(
+    file: { stat?: { ctime?: number } },
+    frontmatter: Record<string, unknown> | null | undefined,
+    rangeExpr: string | null | undefined,
+    creationDateAttr?: string,
+    now?: any
+): boolean {
+    const range = parseDaysRange(rangeExpr);
+    if (!range) {
+        return true;
+    }
+
+    const momentFn: any = (window as any).moment || (globalThis as any).moment;
+    const currentMoment = now ? now.clone() : momentFn();
+
+    let createdTime: any = null;
+    if (creationDateAttr && frontmatter && frontmatter[creationDateAttr]) {
+        const val = frontmatter[creationDateAttr];
+        const m = momentFn(val);
+        if (m.isValid()) {
+            createdTime = m;
+        }
+    }
+
+    if (!createdTime) {
+        const ctime = file.stat?.ctime;
+        if (typeof ctime === "number" && !isNaN(ctime) && ctime > 0) {
+            createdTime = momentFn(ctime);
+        }
+    }
+
+    if (!createdTime || !createdTime.isValid()) {
+        return false;
+    }
+
+    // [currentMoment - maxDays (start of day), currentMoment - minDays (end of day)]
+    const startBound = currentMoment.clone().startOf("day").subtract(range.maxDays, "days");
+    const endBound = currentMoment.clone().endOf("day").subtract(range.minDays, "days");
+
+    return createdTime.isSameOrAfter(startBound) && createdTime.isSameOrBefore(endBound);
+}
+

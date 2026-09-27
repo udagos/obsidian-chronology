@@ -2,7 +2,7 @@
 import { CalendarView, CALENDAR_VIEW } from './Views/CalendarView';
 import { App, Modal, Notice, Plugin, TFile, moment } from 'obsidian';
 import { ChronologySettingTab } from 'src/ChronologySettingTab';
-import { DEFAULT_NOTE_FILTER_STATE, hasAnyTrackedProperty, matchesPropertyChangeExpression, normalizeDisplayedProperties, normalizeFilterPresets, normalizeFilterState } from './noteFilterSettings';
+import { DEFAULT_NOTE_FILTER_STATE, hasAnyTrackedProperty, isNoteCreatedInRange, matchesPropertyChangeExpression, normalizeDisplayedProperties, normalizeFilterPresets, normalizeFilterState } from './noteFilterSettings';
 import type { FilterPreset, NoteFilterState } from './noteFilterSettings';
 import type { DateDisplayMode } from './timeIndexSettings';
 import { normalizeDateDisplayMode, normalizeExcludedFolders } from './timeIndexSettings';
@@ -35,6 +35,7 @@ export interface ChronologyPluginSettings {
     activeDaysWindowDays: number;
     syncActiveDaysToFrontmatter: boolean;
     activeDaysPropertyName: string;
+    activeDaysCreatedRange: string;
 }
 
 const DEFAULT_SETTINGS: ChronologyPluginSettings = {
@@ -63,6 +64,7 @@ const DEFAULT_SETTINGS: ChronologyPluginSettings = {
     activeDaysWindowDays: 7,
     syncActiveDaysToFrontmatter: true,
     activeDaysPropertyName: "active_days",
+    activeDaysCreatedRange: "",
 }
 
 let expSettings: ChronologyPluginSettings;
@@ -169,19 +171,28 @@ export default class ChronologyPlugin extends Plugin {
                         }
 
                         if (this.settings.syncActiveDaysToFrontmatter) {
-                            const propName = (this.settings.activeDaysPropertyName || "active_days").trim();
-                            if (propName) {
-                                const customWindow = this.settings.activeDaysWindowDays > 0 ? this.settings.activeDaysWindowDays : 7;
-                                const toTime = moment().endOf("day");
-                                const fromTime = moment().startOf("day").subtract(customWindow - 1, "days");
-                                let activeDays = 0;
-                                for (const d of list) {
-                                    const m = moment(d, "YYYY-MM-DD");
-                                    if (m.isValid() && m.isSameOrAfter(fromTime, "day") && m.isSameOrBefore(toTime, "day")) {
-                                        activeDays++;
+                            const cachedFm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+                            const inCreationRange = isNoteCreatedInRange(
+                                file,
+                                cachedFm,
+                                this.settings.activeDaysCreatedRange,
+                                this.settings.creationDateAttribute
+                            );
+                            if (inCreationRange) {
+                                const propName = (this.settings.activeDaysPropertyName || "active_days").trim();
+                                if (propName) {
+                                    const customWindow = this.settings.activeDaysWindowDays > 0 ? this.settings.activeDaysWindowDays : 7;
+                                    const toTime = moment().endOf("day");
+                                    const fromTime = moment().startOf("day").subtract(customWindow - 1, "days");
+                                    let activeDays = 0;
+                                    for (const d of list) {
+                                        const m = moment(d, "YYYY-MM-DD");
+                                        if (m.isValid() && m.isSameOrAfter(fromTime, "day") && m.isSameOrBefore(toTime, "day")) {
+                                            activeDays++;
+                                        }
                                     }
+                                    void updateNoteFrontmatterProperty(this.app, file, propName, activeDays);
                                 }
-                                void updateNoteFrontmatterProperty(this.app, file, propName, activeDays);
                             }
                         }
                     }
@@ -212,6 +223,10 @@ export default class ChronologyPlugin extends Plugin {
 
         for (const file of files) {
             const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+            if (!isNoteCreatedInRange(file, fm, this.settings.activeDaysCreatedRange, this.settings.creationDateAttribute)) {
+                continue;
+            }
+
             const hasTracked = hasAnyTrackedProperty(fm, expr);
 
             let activeDays = 0;

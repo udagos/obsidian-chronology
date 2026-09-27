@@ -189,6 +189,24 @@ export class ChronologySettingTab extends PluginSettingTab {
                 });
             });
 
+        new Setting(this.containerEl)
+            .setName("统计笔记创建时间范围")
+            .setDesc("仅统计指定天数范围内创建的笔记。支持输入单个数字（如 30 表示最近 30 天内创建）或区间（如 0-30、7~30、7..30），留空表示不限制全库笔记。修改后若已开启同步属性，将自动批量更新笔记。")
+            .addText(cb => {
+                cb
+                .setPlaceholder("如: 0-30 或 30，留空不限")
+                .setValue(this.plugin.settings.activeDaysCreatedRange || "")
+                .onChange(async (value) => {
+                    const oldVal = this.plugin.settings.activeDaysCreatedRange;
+                    const newVal = value.trim();
+                    this.plugin.settings.activeDaysCreatedRange = newVal;
+                    await this.plugin.saveSettings();
+                    if (oldVal !== newVal && this.plugin.settings.syncActiveDaysToFrontmatter) {
+                        void this.plugin.updateAllNotesActiveDaysProperty(true);
+                    }
+                });
+            });
+
         this.createToggle(containerEl, "同步写入变动天数到笔记属性",
             "开启后，笔记发生变动或修改天数窗口时，自动将计算出的变动天数（如 active_days: 3）写入到文档顶部的 Frontmatter 属性中",
             "syncActiveDaysToFrontmatter"
